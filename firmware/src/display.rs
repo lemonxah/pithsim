@@ -71,7 +71,7 @@ fn read_touch<S: embedded_hal::spi::SpiDevice>(dev: &mut S) -> Option<(i32, i32)
     Some((sx, sy))
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum RaceMode {
     Race,
     Config,
@@ -143,6 +143,15 @@ fn display_task() {
     let mut prev_btn_down = false;
     let mut prev_d1_down = false;
 
+    // pith-ui dirty-rect state (one cache per physical panel). The active layout is
+    // cloned locally and only refreshed when the dashboard pushes a new UiDoc
+    // (tracked via ui_ver), so the hot loop never re-parses or re-clones it.
+    let mut race_cache = pith_ui::RenderCache::new();
+    let mut side_cache = pith_ui::RenderCache::new();
+    let mut local_doc: Option<pith_ui::UiDoc> = state::with(|s| s.ui_doc.clone());
+    let mut last_ui_ver = state::with(|s| s.ui_ver);
+    let mut last_mode = mode;
+
     loop {
         let t = *usb::TELEM.lock().unwrap();
         let now = now_ms();
@@ -153,6 +162,16 @@ fn display_task() {
             ui::render_ota(&mut disp1, pct);
             thread::sleep(Duration::from_millis(100));
             continue;
+        }
+
+        // Refresh the cached pith-ui layout only when the dashboard pushes a new one,
+        // and force a full repaint of both panels on the next frame.
+        let cur_ver = state::with(|s| s.ui_ver);
+        if cur_ver != last_ui_ver {
+            local_doc = state::with(|s| s.ui_doc.clone());
+            last_ui_ver = cur_ver;
+            race_cache.invalidate();
+            side_cache.invalidate();
         }
 
         // Parse the pushed layouts each frame (cheap; could cache on change).
@@ -174,28 +193,49 @@ fn display_task() {
         if mode == RaceMode::Config && now - last_touch_ms > 8000 {
             mode = RaceMode::Race; // auto-return
         }
+        // A mode switch changes the whole race panel -> force a full repaint.
+        if mode != last_mode {
+            race_cache.invalidate();
+            last_mode = mode;
+        }
 
         // --- touch: button panel ---
         let btn_touch = if race_is_1 { read_touch(&mut t2) } else { read_touch(&mut t1) };
         handle_button_touch(&buttons, &mut page, &mut toggle_on, &mut prev_btn_down, btn_touch);
 
-        // --- render (button panel first, shared-bus ordering) ---
-        ui::render_buttons(
-            if race_is_1 { &mut disp2 } else { &mut disp1 },
-            &buttons,
-            page,
-            &t,
-            &toggle_on,
-        );
-        let race_disp = if race_is_1 { &mut disp1 } else { &mut disp2 };
-        match mode {
-            RaceMode::Config => {
-                let (b, sim) = state::with(|s| (s.brightness, s.sim_on));
-                ui::render_config(race_disp, b, sim);
+        // A screen from the active UiDoc is selected by display index (0 = race
+        // panel, 1 = side panel). Absent -> fall back to the legacy renderers.
+        // --- render: side/button panel first (shared-bus ordering) ---
+        {
+            let side_disp = if race_is_1 { &mut disp2 } else { &mut disp1 };
+            let side_scr = local_doc
+                .as_ref()
+                .and_then(|d| d.screens.iter().find(|s| s.display == 1));
+            if let Some(scr) = side_scr {
+                pith_ui::render_screen_diff(scr, &t, now, &mut side_cache, side_disp);
+            } else {
+                ui::render_buttons(side_disp, &buttons, page, &t, &toggle_on);
             }
-            RaceMode::Race => {
-                let layout = ui::parse_race(&race_json).unwrap_or_default();
-                ui::render_race(race_disp, &layout, &t, now);
+        }
+        // --- render: race panel ---
+        {
+            let race_disp = if race_is_1 { &mut disp1 } else { &mut disp2 };
+            match mode {
+                RaceMode::Config => {
+                    let (b, sim) = state::with(|s| (s.brightness, s.sim_on));
+                    ui::render_config(race_disp, b, sim);
+                }
+                RaceMode::Race => {
+                    let race_scr = local_doc
+                        .as_ref()
+                        .and_then(|d| d.screens.iter().find(|s| s.display == 0));
+                    if let Some(scr) = race_scr {
+                        pith_ui::render_screen_diff(scr, &t, now, &mut race_cache, race_disp);
+                    } else {
+                        let layout = ui::parse_race(&race_json).unwrap_or_default();
+                        ui::render_race(race_disp, &layout, &t, now);
+                    }
+                }
             }
         }
 

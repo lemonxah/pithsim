@@ -33,6 +33,9 @@ xiao_s3 = []
 log = "0.4"
 esp-idf-svc = "0.51"
 pith-core = { path = "../pith-core" }
+# Shared runtime UI engine — the device renders pith-ui UiDocs (freeform race
+# screens) with dirty-rect, identical to the desktop preview.
+pith-ui = { path = "../pith-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Display stack (Phase 4): dual ST7796 on the shared SPI2 bus + on-device drawing.

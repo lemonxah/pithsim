@@ -206,6 +206,18 @@ fn dispatch(t: Transport, line: &str) {
         reply(t, if ok { "OK\n" } else { "ERR\n" });
         return;
     }
+    if line.starts_with("@UG") {
+        // Read back the active pith-ui layout (JSON), like @RG.
+        let j = crate::state::with(|s| s.ui_json.clone());
+        let body = if j.is_empty() { "{}" } else { &j };
+        reply(t, &format!("OK {body}\n"));
+        return;
+    }
+    if let Some(rest) = line.strip_prefix("@UI") {
+        let ok = crate::state::with(|s| s.apply_ui(rest));
+        reply(t, if ok { "OK\n" } else { "ERR\n" });
+        return;
+    }
     if let Some(rest) = line.strip_prefix("@SL") {
         let ok = crate::led::apply_car_json(rest);
         if ok {

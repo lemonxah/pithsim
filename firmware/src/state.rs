@@ -49,6 +49,9 @@ pub struct AppState {
     nvs: Option<EspNvs<NvsDefault>>,
     pub pins: DevicePins,
     pub race_json: String,    // last @RS push (echoed by @RG)
+    pub ui_doc: Option<pith_ui::UiDoc>, // active pith-ui layout (@UI)
+    pub ui_json: String,      // last @UI push (echoed by @UG)
+    pub ui_ver: u32,          // bumped on change -> dirty-rect cache invalidation
     pub buttons_json: String, // last @BS push
     pub profile_json: String, // last @P push (dashboard rarely sends)
     pub car_json: String,     // last @C / @SL push
@@ -74,6 +77,9 @@ pub fn init() {
         nvs,
         pins: DevicePins::default(),
         race_json: String::new(),
+        ui_doc: None,
+        ui_json: String::new(),
+        ui_ver: 0,
         buttons_json: String::new(),
         profile_json: String::new(),
         car_json: String::new(),
@@ -119,6 +125,10 @@ impl AppState {
             }
         }
         self.race_json = self.get_str_owned("racejson").unwrap_or_default();
+        self.ui_json = self.get_str_owned("uijson").unwrap_or_default();
+        if !self.ui_json.is_empty() {
+            self.ui_doc = serde_json::from_str(&self.ui_json).ok();
+        }
         self.buttons_json = self.get_str_owned("btnsjson").unwrap_or_default();
         self.profile_json = self.get_str_owned("profjson").unwrap_or_default();
         self.car_json = self.get_str_owned("carjson").unwrap_or_default();
@@ -141,6 +151,21 @@ impl AppState {
         self.race_json = json.to_owned();
         self.set_str("racejson", json);
         true
+    }
+
+    /// Apply a pith-ui UiDoc (pushed as JSON via @UI). Parses + stores + persists,
+    /// and bumps ui_ver so the display task invalidates its dirty-rect cache.
+    pub fn apply_ui(&mut self, json: &str) -> bool {
+        match serde_json::from_str::<pith_ui::UiDoc>(json) {
+            Ok(doc) => {
+                self.ui_doc = Some(doc);
+                self.ui_json = json.to_owned();
+                self.ui_ver = self.ui_ver.wrapping_add(1);
+                self.set_str("uijson", json);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     pub fn apply_buttons(&mut self, json: &str) -> bool {
