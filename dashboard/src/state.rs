@@ -126,6 +126,7 @@ pub struct BoardPin {
 pub struct BoardDef {
     pub name: String,
     pub id: String,
+    #[allow(dead_code)] // board metadata; the Rust firmware target is fixed (esp32s3)
     pub target: String,
     pub pins: Vec<BoardPin>,
 }

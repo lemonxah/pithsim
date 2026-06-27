@@ -1,10 +1,12 @@
 pub mod build;
 pub mod ota;
 
-pub const APP_FW_VERSION: &str = "0.9.2";
-pub const FIRMWARE_GIT_URL: &str = "https://github.com/lemonxah/pithddu-firmware.git";
+pub const APP_FW_VERSION: &str = "0.9.5";
+// Monorepo: the firmware source lives in the `firmware/` subdir; releases are
+// tagged `firmware-v*` (the dashboard filters them by the `pithddu-*.bin` asset).
+pub const FIRMWARE_GIT_URL: &str = "https://github.com/lemonxah/pithddu.git";
 pub const FIRMWARE_RELEASES_URL: &str =
-    "https://api.github.com/repos/lemonxah/pithddu-firmware/releases";
+    "https://api.github.com/repos/lemonxah/pithddu/releases";
 
 pub fn semver_cmp(a: &str, b: &str) -> i32 {
     fn parse(s: &str) -> [i32; 4] {

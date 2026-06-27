@@ -29,11 +29,13 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                     if r.get("draft").and_then(|x| x.as_bool()).unwrap_or(false) {
                         continue;
                     }
+                    // Monorepo tags are `firmware-vX.Y.Z`; strip the stream prefix so
+                    // the version reads + compares like the device's `X.Y.Z`.
+                    let raw_tag = r.get("tag_name").and_then(|x| x.as_str()).unwrap_or("");
                     let mut fr = FwRelease {
-                        tag: r
-                            .get("tag_name")
-                            .and_then(|x| x.as_str())
-                            .unwrap_or("")
+                        tag: raw_tag
+                            .strip_prefix("firmware-")
+                            .unwrap_or(raw_tag)
                             .to_string(),
                         board_bin: Default::default(),
                     };

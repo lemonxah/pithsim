@@ -64,12 +64,26 @@ pub fn repo_root() -> PathBuf {
 }
 
 pub fn default_firmware_path() -> Option<String> {
-    let cand = repo_root().join("build").join("pithddu.bin");
-    if cand.exists() {
-        Some(cand.to_string_lossy().to_string())
-    } else {
-        None
+    // The Rust firmware lives in the monorepo's `firmware/` subdir; `espflash
+    // save-image` writes `pithddu-<board>.bin` there. Pick the newest one.
+    let dir = repo_root().join("firmware");
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if name.starts_with("pithddu-") && name.ends_with(".bin") {
+                let mtime = e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                if newest.as_ref().map(|(t, _)| mtime > *t).unwrap_or(true) {
+                    newest = Some((mtime, p));
+                }
+            }
+        }
     }
+    newest.map(|(_, p)| p.to_string_lossy().to_string())
 }
 
 pub fn read_file(p: &std::path::Path) -> String {

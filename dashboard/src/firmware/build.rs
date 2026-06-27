@@ -42,29 +42,15 @@ fn parse_flash(l: &str) -> Option<f32> {
     parse_ninja(l)
 }
 
-fn marker_tag(board_id: &str, target: &str) -> String {
-    format!("{board_id}:{target}")
-}
-
-fn need_clean(root: &std::path::Path, tag: &str) -> bool {
-    let marker = root.join("build").join(".pithddu_board");
-    let last = std::fs::read_to_string(&marker)
-        .ok()
-        .and_then(|s| s.lines().next().map(|l| l.to_string()))
-        .unwrap_or_default();
-    last != tag || !root.join("build").join("build.ninja").exists()
-}
-
-fn build_sh(root: &str, board_id: &str, target: &str, need_clean: bool, tail: &str) -> String {
-    let set_target = if need_clean {
-        format!("idf.py -DBOARD={board_id} set-target {target} && ")
-    } else {
-        String::new()
-    };
+fn build_sh(root: &str, tail: &str) -> String {
+    // The firmware is a Rust esp project in the monorepo's `firmware/` subdir.
+    // Clone the monorepo if absent (NOT the retired pithddu-firmware repo),
+    // fast-forward otherwise, then run `tail` in the firmware crate — its
+    // rust-toolchain.toml selects the `esp` channel automatically.
     format!(
-        "[ -f '{root}/CMakeLists.txt' ] || git clone --depth 1 {FIRMWARE_GIT_URL} '{root}'; \
+        "set -e; [ -d '{root}/.git' ] || git clone --depth 1 {FIRMWARE_GIT_URL} '{root}'; \
          git -C '{root}' pull --ff-only 2>/dev/null || true; \
-         cd '{root}' && source ./idf-env.sh && {set_target}{tail}"
+         cd '{root}/firmware'; {tail}"
     )
 }
 
@@ -111,10 +97,10 @@ pub fn start_firmware_build(ctx: &Arc<Ctx>) {
         fw.set_build_status(sstr("ESP-IDF not found"));
         return;
     }
-    let (board_id, board_name, target) = {
+    let (board_id, board_name) = {
         let s = ctx.lock();
         let b = s.cur_board();
-        (b.id.clone(), b.name.clone(), b.target.clone())
+        (b.id.clone(), b.name.clone())
     };
     let root = repo_root().to_string_lossy().to_string();
     fw.set_building(true);
@@ -126,19 +112,18 @@ pub fn start_firmware_build(ctx: &Arc<Ctx>) {
 
     let ctx = ctx.clone();
     ctx.clone().spawn(async move {
-        let tag = marker_tag(&board_id, &target);
-        let nc = need_clean(std::path::Path::new(&root), &tag);
-        let sh = build_sh(
-            &root,
-            &board_id,
-            &target,
-            nc,
-            &format!("idf.py -DBOARD={board_id} build"),
+        // Cross-compile, then pack the app image the dashboard installs over OTA —
+        // identical to the `firmware-v*` CI (`espflash save-image`).
+        let tail = format!(
+            "cargo build --release && \
+             espflash save-image --chip esp32s3 \
+               target/xtensa-esp32s3-espidf/release/pithddu pithddu-{board_id}.bin"
         );
+        let sh = build_sh(&root, &tail);
         let (ok, cancelled) = {
             let cb_ctx = ctx.clone();
             stream_cmd(&ctx, &sh, move |l| {
-                let prog = parse_ninja(l);
+                let prog = parse_flash(l);
                 let tail: String = l.chars().take(80).collect();
                 cb_ctx.ui_run(move |u| {
                     let fw = u.global::<Firmware>();
@@ -152,14 +137,6 @@ pub fn start_firmware_build(ctx: &Arc<Ctx>) {
             })
             .await
         };
-        if ok {
-            let _ = std::fs::write(
-                std::path::Path::new(&root)
-                    .join("build")
-                    .join(".pithddu_board"),
-                &tag,
-            );
-        }
         let bin = if ok { default_firmware_path() } else { None };
         let size = bin
             .as_ref()
@@ -214,13 +191,12 @@ pub fn start_serial_flash(ctx: &Arc<Ctx>, port: String, full_image: bool) {
         fw.set_serial_status(sstr("Select a serial port"));
         return;
     }
-    let (board_id, board_name, target) = {
+    let (_board_id, board_name) = {
         let s = ctx.lock();
         let b = s.cur_board();
-        (b.id.clone(), b.name.clone(), b.target.clone())
+        (b.id.clone(), b.name.clone())
     };
     let root = repo_root().to_string_lossy().to_string();
-    let sub = if full_image { "flash" } else { "app-flash" };
     fw.set_flashing_serial(true);
     fw.set_serial_progress(0.0);
     fw.set_serial_status(sstr(&format!(
@@ -236,10 +212,13 @@ pub fn start_serial_flash(ctx: &Arc<Ctx>, port: String, full_image: bool) {
 
     let ctx = ctx.clone();
     ctx.clone().spawn(async move {
-        let tag = marker_tag(&board_id, &target);
-        let nc = need_clean(std::path::Path::new(&root), &tag);
-        let tail_cmd = format!("idf.py -DBOARD={board_id} -p '{port}' -b 460800 {sub}");
-        let sh = build_sh(&root, &board_id, &target, nc, &tail_cmd);
+        // espflash flashes the freshly-built ELF (bootloader + partitions + app).
+        let tail_cmd = format!(
+            "cargo build --release && \
+             espflash flash --chip esp32s3 --port '{port}' --baud 460800 \
+               target/xtensa-esp32s3-espidf/release/pithddu"
+        );
+        let sh = build_sh(&root, &tail_cmd);
         let (ok, cancelled) = {
             let cb_ctx = ctx.clone();
             stream_cmd(&ctx, &sh, move |l| {
@@ -257,14 +236,6 @@ pub fn start_serial_flash(ctx: &Arc<Ctx>, port: String, full_image: bool) {
             })
             .await
         };
-        if ok {
-            let _ = std::fs::write(
-                std::path::Path::new(&root)
-                    .join("build")
-                    .join(".pithddu_board"),
-                &tag,
-            );
-        }
         let pfx = if full_image {
             "Flashed full image to "
         } else {
