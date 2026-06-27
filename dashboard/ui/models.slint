@@ -151,6 +151,9 @@ export struct NodeBox {
     id: string, x: int, y: int, w: int, h: int,   // device px
     kind: string, label: string, selected: bool,
 }
+
+// A device-pixel point (used as the snapped drag delta returned by node-snap).
+export struct Pt { x: int, y: int }
 export struct LayoutZone { key: string, title: string, modules: [ZoneModule] }
 export struct PresetCard { name: string, summary: string, active: bool, builtin: bool }
 export struct ModuleDef { type: string, name: string, desc: string }   // catalog entry
@@ -223,6 +226,17 @@ export global RaceLayout {
     callback node-drag-end();                           // commit + persist
     callback set-node-geo(int /*x*/, int /*y*/, int /*w*/, int /*h*/);  // precise numeric placement
     callback switch-display(int);
+    // snap-to-guides while dragging: returns the snapped delta from the gesture
+    // start (device px); also publishes the active guide lines below.
+    callback node-snap(int /*raw-dx*/, int /*raw-dy*/) -> Pt;
+    in-out property <int> snap-vx: -1;   // active vertical guide (device x, -1 = none)
+    in-out property <int> snap-hy: -1;   // active horizontal guide (device y, -1 = none)
+    // alignment of the selected node against the canvas / other nodes
+    callback node-center();      // centre on the screen (both axes)
+    callback node-center-h();    // centre horizontally (screen X)
+    callback node-center-v();    // centre vertically (screen Y)
+    callback node-align-h();     // align Y to the nearest other node (a row)
+    callback node-align-v();     // align X to the nearest other node (a column)
 }
 
 // ---- Car library / lovely-car-data (§6) ----

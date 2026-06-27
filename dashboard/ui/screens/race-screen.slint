@@ -2,7 +2,7 @@
 // Presets apply zone configs; modules drag-reorder by their left handle, toggle,
 // add from a per-zone palette, and the live 320×240 mirror reflects every change.
 import { Theme } from "../theme.slint";
-import { RaceLayout, Telemetry, PresetCard, ZoneModule, ModuleDef, RuleRow, DeviceCaps, NodeBox } from "../models.slint";
+import { RaceLayout, Telemetry, PresetCard, ZoneModule, ModuleDef, RuleRow, DeviceCaps, NodeBox, Pt } from "../models.slint";
 import { Card, PrimaryButton, GhostButton, Dot } from "../widgets.slint";
 import { ComboBox, LineEdit, Button, Slider } from "std-widgets.slint";
 
@@ -61,6 +61,18 @@ component EditPanel inherits Card {
         }
         // (X/Y/W/H share a row; on a narrow window widen the dashboard so the
         // editor panel + canvas both fit — the window min-width is 1120px.)
+        Text { text: "ALIGN ON SCREEN"; color: Theme.text3; font-size: 10px; letter-spacing: 0.5px; }
+        HorizontalLayout {
+            spacing: 4px;
+            Button { text: "Centre"; clicked => { RaceLayout.node-center(); } }
+            Button { text: "Centre H"; clicked => { RaceLayout.node-center-h(); } }
+            Button { text: "Centre V"; clicked => { RaceLayout.node-center-v(); } }
+        }
+        HorizontalLayout {
+            spacing: 4px;
+            Button { text: "Align H →other"; clicked => { RaceLayout.node-align-h(); } }
+            Button { text: "Align V →other"; clicked => { RaceLayout.node-align-v(); } }
+        }
         HorizontalLayout {
             Text { text: "COLOR RULES"; color: Theme.text3; font-size: 10px; letter-spacing: 0.5px; vertical-alignment: center; }
             Rectangle { }
@@ -91,6 +103,7 @@ component NodeOverlay inherits Rectangle {
     property <length> ddy: 0;
     property <length> dw: 0;
     property <length> dh: 0;
+    property <Pt> snap-res;     // snapped drag delta returned by node-snap
 
     x: root.ox + node.x * root.scale * 1px + root.ddx;
     y: root.oy + node.y * root.scale * 1px + root.ddy;
@@ -122,9 +135,13 @@ component NodeOverlay inherits Rectangle {
             }
         }
         moved => {
-            root.ddx = self.mouse-x - self.ax;
-            root.ddy = self.mouse-y - self.ay;
-            RaceLayout.node-move(Math.round(root.ddx / 1px / root.scale), Math.round(root.ddy / 1px / root.scale));
+            // Ask Rust to snap the raw delta to screen + element guides; follow the
+            // snapped result so the box itself snaps live.
+            root.snap-res = RaceLayout.node-snap(
+                Math.round((self.mouse-x - self.ax) / 1px / root.scale),
+                Math.round((self.mouse-y - self.ay) / 1px / root.scale));
+            root.ddx = root.snap-res.x * root.scale * 1px;
+            root.ddy = root.snap-res.y * root.scale * 1px;
         }
     }
     // resize handle (bottom-right corner)
@@ -294,6 +311,21 @@ export component RaceScreen inherits Rectangle {
                                 scale: stage.fit;
                                 ox: 6px;
                                 oy: 6px;
+                            }
+                            // snap guide lines (active while dragging)
+                            if RaceLayout.snap-vx >= 0: Rectangle {
+                                x: 6px + RaceLayout.snap-vx * stage.fit * 1px;
+                                y: 6px;
+                                width: 1px;
+                                height: parent.height - 12px;
+                                background: Theme.accent;
+                            }
+                            if RaceLayout.snap-hy >= 0: Rectangle {
+                                x: 6px;
+                                y: 6px + RaceLayout.snap-hy * stage.fit * 1px;
+                                width: parent.width - 12px;
+                                height: 1px;
+                                background: Theme.accent;
                             }
                         }
                     }

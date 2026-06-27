@@ -37,6 +37,95 @@ fn with_selected<F: FnOnce(&mut ModSpec)>(u: &AppWindow, s: &mut State, f: F) ->
     }
 }
 
+const CANVAS_W: i32 = 480;
+const CANVAS_H: i32 = 320;
+const SNAP_PX: i32 = 6;
+
+/// Snap a dragged node's rect to alignment guides: the screen centre/edges and
+/// every other node's left/centre/right + top/centre/bottom. Returns the snapped
+/// (x, y) plus the active guide lines (device x / y; -1 = none) for drawing.
+fn snap_pos(
+    nodes: &[ModSpec],
+    drag_id: &str,
+    display: u8,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) -> (i32, i32, i32, i32) {
+    let mut vc = vec![0, CANVAS_W / 2, CANVAS_W];
+    let mut hc = vec![0, CANVAS_H / 2, CANVAS_H];
+    for n in nodes {
+        if n.id == drag_id || n.display != display {
+            continue;
+        }
+        vc.extend_from_slice(&[n.x, n.x + n.w / 2, n.x + n.w]);
+        hc.extend_from_slice(&[n.y, n.y + n.h / 2, n.y + n.h]);
+    }
+    // best snap offset over the three edges (start/centre/end) against candidates
+    let best = |edges: [i32; 3], cands: &[i32]| -> (i32, i32) {
+        let (mut bd, mut off, mut guide) = (SNAP_PX + 1, 0, -1);
+        for e in edges {
+            for &c in cands {
+                let d = (c - e).abs();
+                if d < bd {
+                    bd = d;
+                    off = c - e;
+                    guide = c;
+                }
+            }
+        }
+        if bd <= SNAP_PX {
+            (off, guide)
+        } else {
+            (0, -1)
+        }
+    };
+    let (ox, gv) = best([x, x + w / 2, x + w], &vc);
+    let (oy, gh) = best([y, y + h / 2, y + h], &hc);
+    (x + ox, y + oy, gv, gh)
+}
+
+/// Align the selected node's centre to the nearest other node on the same display:
+/// `horizontal` aligns the Y centres (a row), otherwise the X centres (a column).
+fn align_node(c: &Arc<Ctx>, horizontal: bool) {
+    let u = match c.ui.upgrade() {
+        Some(u) => u,
+        None => return,
+    };
+    let mut st = c.lock();
+    let id = u.global::<RaceLayout>().get_sel_id().to_string();
+    let disp = st.edit_display;
+    let sel = st.nodes.iter().find(|m| m.id == id).map(|m| {
+        if horizontal {
+            (m.y + m.h / 2, m.h)
+        } else {
+            (m.x + m.w / 2, m.w)
+        }
+    });
+    let (sc, sz) = match sel {
+        Some(v) => v,
+        None => return,
+    };
+    let target = st
+        .nodes
+        .iter()
+        .filter(|m| m.id != id && m.display == disp)
+        .map(|m| if horizontal { m.y + m.h / 2 } else { m.x + m.w / 2 })
+        .min_by_key(|cc| (cc - sc).abs());
+    if let Some(tc) = target {
+        if let Some(m) = st.nodes.iter_mut().find(|m| m.id == id) {
+            if horizontal {
+                m.y = (tc - sz / 2).clamp(0, CANVAS_H - m.h);
+            } else {
+                m.x = (tc - sz / 2).clamp(0, CANVAS_W - m.w);
+            }
+        }
+        mark_dirty(&u, &st);
+        refresh_race(&u, &st);
+    }
+}
+
 pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
     {
         let app = ui.global::<AppState>();
@@ -462,10 +551,73 @@ pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
             if let Some(u) = c.ui.upgrade() {
                 let mut st = c.lock();
                 st.drag_origin = None;
+                let rl = u.global::<RaceLayout>();
+                rl.set_snap_vx(-1);
+                rl.set_snap_hy(-1);
                 mark_dirty(&u, &st);
                 refresh_race(&u, &st);
             }
         });
+        // Snap-to-guides while dragging: snap the raw position to the screen + other
+        // nodes, publish the active guide lines, and return the snapped delta so the
+        // overlay box follows the snap (no model rebuild mid-gesture).
+        let c = ctx.clone();
+        rl.on_node_snap(move |raw_dx, raw_dy| {
+            if let Some(u) = c.ui.upgrade() {
+                let mut st = c.lock();
+                if let Some((id, ox, oy, ow, oh)) = st.drag_origin.clone() {
+                    let nx = (ox + raw_dx).clamp(0, CANVAS_W - ow.max(1));
+                    let ny = (oy + raw_dy).clamp(0, CANVAS_H - oh.max(1));
+                    let disp = st.edit_display;
+                    let (sx, sy, gv, gh) = snap_pos(&st.nodes, &id, disp, nx, ny, ow, oh);
+                    if let Some(m) = st.nodes.iter_mut().find(|m| m.id == id) {
+                        m.x = sx;
+                        m.y = sy;
+                    }
+                    let rl = u.global::<RaceLayout>();
+                    rl.set_snap_vx(gv);
+                    rl.set_snap_hy(gh);
+                    crate::ui_bridge::uidoc::push_preview(&u, &st);
+                    return crate::Pt { x: sx - ox, y: sy - oy };
+                }
+            }
+            crate::Pt { x: raw_dx, y: raw_dy }
+        });
+        // --- alignment buttons (act on the selected node) ---
+        let c = ctx.clone();
+        rl.on_node_center(move || {
+            if let Some(u) = c.ui.upgrade() {
+                let mut st = c.lock();
+                with_selected(&u, &mut st, |m| {
+                    m.x = (CANVAS_W - m.w) / 2;
+                    m.y = (CANVAS_H - m.h) / 2;
+                });
+                mark_dirty(&u, &st);
+                refresh_race(&u, &st);
+            }
+        });
+        let c = ctx.clone();
+        rl.on_node_center_h(move || {
+            if let Some(u) = c.ui.upgrade() {
+                let mut st = c.lock();
+                with_selected(&u, &mut st, |m| m.x = (CANVAS_W - m.w) / 2);
+                mark_dirty(&u, &st);
+                refresh_race(&u, &st);
+            }
+        });
+        let c = ctx.clone();
+        rl.on_node_center_v(move || {
+            if let Some(u) = c.ui.upgrade() {
+                let mut st = c.lock();
+                with_selected(&u, &mut st, |m| m.y = (CANVAS_H - m.h) / 2);
+                mark_dirty(&u, &st);
+                refresh_race(&u, &st);
+            }
+        });
+        let c = ctx.clone();
+        rl.on_node_align_h(move || align_node(&c, true));
+        let c = ctx.clone();
+        rl.on_node_align_v(move || align_node(&c, false));
         let c = ctx.clone();
         rl.on_set_node_geo(move |x, y, w, h| {
             if let Some(u) = c.ui.upgrade() {
