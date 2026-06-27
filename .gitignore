@@ -5,3 +5,4 @@
 *.swp
 .DS_Store
 nohup.out
+/firmware/pithddu-*.bin
