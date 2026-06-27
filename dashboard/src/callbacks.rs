@@ -780,6 +780,25 @@ pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
             c.lock().led_rgbw = if v { 1 } else { 0 };
         });
         let c = ctx.clone();
+        dc.on_set_disp(move |rot, fh, fv| {
+            if let Some(u) = c.ui.upgrade() {
+                {
+                    let mut st = c.lock();
+                    st.disp_rot = rot.clamp(0, 3);
+                    st.disp_flip_h = fh;
+                    st.disp_flip_v = fv;
+                }
+                // Reflect immediately, then apply live on the device (no reboot).
+                let dc = u.global::<DeviceCfg>();
+                dc.set_disp_rot(rot.clamp(0, 3));
+                dc.set_disp_flip_h(fh);
+                dc.set_disp_flip_v(fv);
+                if c.dash().connected() {
+                    c.dash().push_disp(rot.clamp(0, 3), fh, fv);
+                }
+            }
+        });
+        let c = ctx.clone();
         dc.on_save_pins(move || {
             let u = match c.ui.upgrade() {
                 Some(u) => u,

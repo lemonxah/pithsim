@@ -25,7 +25,103 @@ use mipidsi::models::ST7796;
 use mipidsi::options::{ColorInversion, Orientation, Rotation};
 use mipidsi::Builder;
 
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::{DrawTarget, OriginDimensions, Pixel, RgbColor, Size};
+use embedded_graphics::primitives::Rectangle;
+
 use crate::{hid, ota, state, ui, usb};
+
+/// An in-RAM RGB565 framebuffer (lives in PSRAM). The whole UI is drawn here —
+/// fonts and fills hit RAM instead of issuing a windowed SPI write per glyph
+/// pixel — then the full buffer is streamed to the panel in one DMA blit. This
+/// is what makes redraws fast (direct-to-SPI font drawing was ~1 s/frame).
+struct FrameBuf {
+    data: Vec<Rgb565>,
+    w: i32,
+    h: i32,
+}
+
+impl FrameBuf {
+    fn new(w: i32, h: i32) -> Self {
+        Self { data: vec![Rgb565::BLACK; (w * h) as usize], w, h }
+    }
+    #[inline]
+    fn put(&mut self, x: i32, y: i32, c: Rgb565) {
+        if x >= 0 && y >= 0 && x < self.w && y < self.h {
+            self.data[(y * self.w + x) as usize] = c;
+        }
+    }
+}
+
+/// Stream a whole framebuffer to a panel in one windowed write (DMA). A macro
+/// (not a generic fn) sidesteps naming the display's concrete reset-pin type.
+macro_rules! blit {
+    ($disp:expr, $fb:expr) => {{
+        let _ = $disp.set_pixels(
+            0,
+            0,
+            (ui::W - 1) as u16,
+            (ui::H - 1) as u16,
+            $fb.data.iter().copied(),
+        );
+    }};
+}
+
+impl OriginDimensions for FrameBuf {
+    fn size(&self) -> Size {
+        Size::new(self.w as u32, self.h as u32)
+    }
+}
+
+impl DrawTarget for FrameBuf {
+    type Color = Rgb565;
+    type Error = core::convert::Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Rgb565>>,
+    {
+        for Pixel(p, c) in pixels {
+            self.put(p.x, p.y, c);
+        }
+        Ok(())
+    }
+
+    fn fill_contiguous<I>(&mut self, area: &Rectangle, colors: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Rgb565>,
+    {
+        let mut it = colors.into_iter();
+        for y in area.top_left.y..area.top_left.y + area.size.height as i32 {
+            for x in area.top_left.x..area.top_left.x + area.size.width as i32 {
+                match it.next() {
+                    Some(c) => self.put(x, y, c),
+                    None => return Ok(()),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn fill_solid(&mut self, area: &Rectangle, color: Rgb565) -> Result<(), Self::Error> {
+        let x0 = area.top_left.x.max(0);
+        let y0 = area.top_left.y.max(0);
+        let x1 = (area.top_left.x + area.size.width as i32).min(self.w);
+        let y1 = (area.top_left.y + area.size.height as i32).min(self.h);
+        for y in y0..y1 {
+            let row = (y * self.w) as usize;
+            for x in x0..x1 {
+                self.data[row + x as usize] = color;
+            }
+        }
+        Ok(())
+    }
+
+    fn clear(&mut self, color: Rgb565) -> Result<(), Self::Error> {
+        self.data.iter_mut().for_each(|p| *p = color);
+        Ok(())
+    }
+}
 
 // XPT2046 calibration (from the legacy lgfx setup): Y is inverted.
 const X_MIN: i32 = 300;
@@ -81,6 +177,25 @@ fn now_ms() -> i64 {
     unsafe { esp_idf_svc::sys::esp_timer_get_time() / 1000 }
 }
 
+/// Build a mipidsi orientation from the runtime config (rotation 0..3 = 0/90/
+/// 180/270°, plus optional mirroring), so a differently-mounted panel is a
+/// config change rather than a recompile.
+fn make_orientation(rot: u8, flip_h: bool, flip_v: bool) -> Orientation {
+    let mut o = Orientation::new().rotate(match rot & 3 {
+        0 => Rotation::Deg0,
+        1 => Rotation::Deg90,
+        2 => Rotation::Deg180,
+        _ => Rotation::Deg270,
+    });
+    if flip_h {
+        o = o.flip_horizontal();
+    }
+    if flip_v {
+        o = o.flip_vertical();
+    }
+    o
+}
+
 fn display_task() {
     let peripherals = match Peripherals::take() {
         Ok(p) => p,
@@ -125,15 +240,17 @@ fn display_task() {
     let buf1: &'static mut [u8] = vec![0u8; 16384].leak();
     let buf2: &'static mut [u8] = vec![0u8; 16384].leak();
     let mut delay = Ets;
+    let (drot, dfh, dfv) = state::with(|s| (s.disp_rot, s.disp_flip_h, s.disp_flip_v));
+    let orient = make_orientation(drot, dfh, dfv);
     let mut disp1 = Builder::new(ST7796, SpiInterface::new(dev1, dc.clone(), buf1))
         .display_size(320, 480)
-        .orientation(Orientation::new().rotate(Rotation::Deg270))
+        .orientation(orient)
         .invert_colors(ColorInversion::Normal)
         .init(&mut delay)
         .expect("disp1");
     let mut disp2 = Builder::new(ST7796, SpiInterface::new(dev2, dc.clone(), buf2))
         .display_size(320, 480)
-        .orientation(Orientation::new().rotate(Rotation::Deg270))
+        .orientation(orient)
         .invert_colors(ColorInversion::Normal)
         .init(&mut delay)
         .expect("disp2");
@@ -156,6 +273,13 @@ fn display_task() {
     let mut local_doc: Option<pith_ui::UiDoc> = state::with(|s| s.ui_doc.clone());
     let mut last_ui_ver = state::with(|s| s.ui_ver);
     let mut last_mode = mode;
+    let mut last_disp_ver = state::with(|s| s.disp_ver);
+
+    // Two PSRAM framebuffers, one per physical panel. The UI draws into RAM
+    // (fonts + fills never touch SPI) and each panel is flushed in a single DMA
+    // blit. fb1 -> disp1, fb2 -> disp2.
+    let mut fb1 = FrameBuf::new(ui::W, ui::H);
+    let mut fb2 = FrameBuf::new(ui::W, ui::H);
 
     loop {
         let t = *usb::TELEM.lock().unwrap();
@@ -163,10 +287,21 @@ fn display_task() {
 
         if ota::ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
             let pct = ota_pct();
-            ui::render_ota(&mut disp2, pct);
-            ui::render_ota(&mut disp1, pct);
+            ui::render_ota(&mut fb1, pct);
+            blit!(disp1, fb1);
+            blit!(disp2, fb1);
             thread::sleep(Duration::from_millis(100));
             continue;
+        }
+
+        // Re-apply display orientation live when the dashboard changes it (@DO).
+        let cur_disp_ver = state::with(|s| s.disp_ver);
+        if cur_disp_ver != last_disp_ver {
+            last_disp_ver = cur_disp_ver;
+            let (r, fh, fv) = state::with(|s| (s.disp_rot, s.disp_flip_h, s.disp_flip_v));
+            let o = make_orientation(r, fh, fv);
+            let _ = disp1.set_orientation(o);
+            let _ = disp2.set_orientation(o);
         }
 
         // Refresh the cached pith-ui layout only when the dashboard pushes a new one,
@@ -210,37 +345,48 @@ fn display_task() {
 
         // A screen from the active UiDoc is selected by display index (0 = race
         // panel, 1 = side panel). Absent -> fall back to the legacy renderers.
+        // Each panel is drawn into its framebuffer, then blitted in one DMA write.
         // --- render: side/button panel first (shared-bus ordering) ---
         {
-            let side_disp = if race_is_1 { &mut disp2 } else { &mut disp1 };
+            let fb = if race_is_1 { &mut fb2 } else { &mut fb1 };
             let side_scr = local_doc
                 .as_ref()
                 .and_then(|d| d.screens.iter().find(|s| s.display == 1));
             if let Some(scr) = side_scr {
-                pith_ui::render_screen_diff(scr, &t, now, &mut side_cache, side_disp);
+                pith_ui::render_screen_diff(scr, &t, now, &mut side_cache, fb);
             } else {
-                ui::render_buttons(side_disp, &buttons, page, &t, &toggle_on);
+                ui::render_buttons(fb, &buttons, page, &t, &toggle_on);
+            }
+            if race_is_1 {
+                blit!(disp2, fb2);
+            } else {
+                blit!(disp1, fb1);
             }
         }
         // --- render: race panel ---
         {
-            let race_disp = if race_is_1 { &mut disp1 } else { &mut disp2 };
+            let fb = if race_is_1 { &mut fb1 } else { &mut fb2 };
             match mode {
                 RaceMode::Config => {
                     let (b, sim) = state::with(|s| (s.brightness, s.sim_on));
-                    ui::render_config(race_disp, b, sim);
+                    ui::render_config(fb, b, sim);
                 }
                 RaceMode::Race => {
                     let race_scr = local_doc
                         .as_ref()
                         .and_then(|d| d.screens.iter().find(|s| s.display == 0));
                     if let Some(scr) = race_scr {
-                        pith_ui::render_screen_diff(scr, &t, now, &mut race_cache, race_disp);
+                        pith_ui::render_screen_diff(scr, &t, now, &mut race_cache, fb);
                     } else {
                         let layout = ui::parse_race(&race_json).unwrap_or_default();
-                        ui::render_race(race_disp, &layout, &t, now);
+                        ui::render_race(fb, &layout, &t, now);
                     }
                 }
+            }
+            if race_is_1 {
+                blit!(disp1, fb1);
+            } else {
+                blit!(disp2, fb2);
             }
         }
 

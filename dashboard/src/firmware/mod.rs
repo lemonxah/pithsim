@@ -1,7 +1,7 @@
 pub mod build;
 pub mod ota;
 
-pub const APP_FW_VERSION: &str = "0.9.6";
+pub const APP_FW_VERSION: &str = "0.9.7";
 // Monorepo: the firmware source lives in the `firmware/` subdir; releases are
 // tagged `firmware-v*` (the dashboard filters them by the `pithddu-*.bin` asset).
 pub const FIRMWARE_GIT_URL: &str = "https://github.com/lemonxah/pithddu.git";

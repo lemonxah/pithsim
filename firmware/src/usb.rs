@@ -218,6 +218,20 @@ fn dispatch(t: Transport, line: &str) {
         reply(t, if ok { "OK\n" } else { "ERR\n" });
         return;
     }
+    if let Some(rest) = line.strip_prefix("@DO") {
+        // Display orientation: {"rot":0..3,"fh":bool,"fv":bool}. Applied live.
+        match serde_json::from_str::<serde_json::Value>(rest) {
+            Ok(v) => {
+                let rot = v.get("rot").and_then(|x| x.as_u64()).unwrap_or(3) as u8;
+                let fh = v.get("fh").and_then(|x| x.as_bool()).unwrap_or(false);
+                let fv = v.get("fv").and_then(|x| x.as_bool()).unwrap_or(false);
+                crate::state::with(|s| s.apply_disp(rot, fh, fv));
+                reply(t, "OK\n");
+            }
+            Err(_) => reply(t, "ERR\n"),
+        }
+        return;
+    }
     if let Some(rest) = line.strip_prefix("@SL") {
         let ok = crate::led::apply_car_json(rest);
         if ok {

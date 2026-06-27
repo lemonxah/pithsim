@@ -111,6 +111,14 @@ impl Dash {
     pub fn set_brightness(&mut self, pct: i32) {
         self.command(&format!("@B{pct}"));
     }
+    /// Push the display orientation (applied live on the device, no reboot).
+    pub fn push_disp(&mut self, rot: i32, flip_h: bool, flip_v: bool) -> bool {
+        let (ok, r) = self.command(&format!(
+            "@DO{{\"rot\":{rot},\"fh\":{flip_h},\"fv\":{flip_v}}}"
+        ));
+        self.logln(&format!("disp: {r}"));
+        ok
+    }
 
     pub fn ota_upload(&mut self, img: &[u8], mut on_progress: impl FnMut(i32)) -> bool {
         self.drain_t();

@@ -337,6 +337,11 @@ export global DeviceCfg {
     in-out property <int> led-abs: 2;
     in-out property <bool> led-rgbw: true;    // SK6812 RGBW vs WS2812 RGB
     in-out property <string> pins-status: "";
+    // Display orientation (applied live via @DO, no reboot — for differently-
+    // mounted panels). rot index 0..3 = 0/90/180/270°.
+    in-out property <int> disp-rot: 3;
+    in-out property <bool> disp-flip-h: true;
+    in-out property <bool> disp-flip-v: false;
     callback set-pin(string /*key*/, int /*option-index*/);
     callback set-board(int);
     callback set-race-screen(int);
@@ -344,6 +349,7 @@ export global DeviceCfg {
     callback set-led-tc(int);
     callback set-led-abs(int);
     callback set-led-rgbw(bool);
+    callback set-disp(int /*rot*/, bool /*flip-h*/, bool /*flip-v*/);  // push @DO live
     callback save-pins();        // push @PINS — the device reboots to apply
 }
 

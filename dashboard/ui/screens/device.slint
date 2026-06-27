@@ -146,6 +146,34 @@ export component DeviceConfigScreen inherits Rectangle {
                 Card {
                     VerticalLayout {
                         padding: 16px; spacing: 8px;
+                        SectionLabel { text: "DISPLAY ORIENTATION"; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text { text: "Rotation"; color: Theme.text; font-size: 13px; vertical-alignment: center; }
+                            Rectangle { }
+                            ComboBox {
+                                width: 150px;
+                                model: ["0°", "90°", "180°", "270°"];
+                                current-index: DeviceCfg.disp-rot;
+                                selected(v) => { DeviceCfg.set-disp(self.current-index, DeviceCfg.disp-flip-h, DeviceCfg.disp-flip-v); }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text { text: "Mirror horizontally"; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+                            ToggleSwitch { on: DeviceCfg.disp-flip-h; toggled(v) => { DeviceCfg.set-disp(DeviceCfg.disp-rot, v, DeviceCfg.disp-flip-v); } }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text { text: "Mirror vertically"; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+                            ToggleSwitch { on: DeviceCfg.disp-flip-v; toggled(v) => { DeviceCfg.set-disp(DeviceCfg.disp-rot, DeviceCfg.disp-flip-h, v); } }
+                        }
+                        Text { text: "Applied instantly (no reboot). Fix a mirrored or upside-down panel without reflashing."; color: Theme.text3; font-size: 11px; wrap: word-wrap; }
+                    }
+                }
+                Card {
+                    VerticalLayout {
+                        padding: 16px; spacing: 8px;
                         SectionLabel { text: "LED STRIP"; }
                         HorizontalLayout {
                             spacing: 8px;

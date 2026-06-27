@@ -253,6 +253,21 @@ pub fn apply_caps(ui: &AppWindow, s: &mut State, line: &str) {
         super::device::push_pins(ui, s);
     }
 
+    if let Some(d) = j.get("disp") {
+        s.disp_rot = d
+            .get("rot")
+            .and_then(|x| x.as_i64())
+            .map(|x| x as i32)
+            .unwrap_or(s.disp_rot)
+            .clamp(0, 3);
+        s.disp_flip_h = d.get("fh").and_then(|x| x.as_bool()).unwrap_or(s.disp_flip_h);
+        s.disp_flip_v = d.get("fv").and_then(|x| x.as_bool()).unwrap_or(s.disp_flip_v);
+        let dc = ui.global::<crate::DeviceCfg>();
+        dc.set_disp_rot(s.disp_rot);
+        dc.set_disp_flip_h(s.disp_flip_h);
+        dc.set_disp_flip_v(s.disp_flip_v);
+    }
+
     let fwv = j
         .get("fw")
         .and_then(|x| x.as_str())

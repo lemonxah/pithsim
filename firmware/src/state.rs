@@ -62,6 +62,12 @@ pub struct AppState {
     pub frames_bad: u32,
     pub sim_on: bool,
     pub cfg_reboot: bool,     // pin map changed -> reboot to apply
+    // Display orientation (runtime-configurable so a differently-mounted panel
+    // doesn't need a recompile). Applied at init + live on @DO.
+    pub disp_rot: u8,         // 0..3 = 0/90/180/270 degrees
+    pub disp_flip_h: bool,    // mirror horizontally
+    pub disp_flip_v: bool,    // mirror vertically
+    pub disp_ver: u32,        // bumped on change -> display task re-applies
 }
 
 static STATE: OnceLock<Mutex<AppState>> = OnceLock::new();
@@ -90,6 +96,11 @@ pub fn init() {
         frames_bad: 0,
         sim_on: false,
         cfg_reboot: false,
+        // Default matches the XIAO DDU reference panels (270° + horizontal flip).
+        disp_rot: 3,
+        disp_flip_h: true,
+        disp_flip_v: false,
+        disp_ver: 0,
     };
     s.load();
     let _ = STATE.set(Mutex::new(s));
@@ -139,6 +150,26 @@ impl AppState {
             if let Ok(Some(n)) = nvs.get_u8("btnpages") {
                 self.button_pages = n;
             }
+            if let Ok(Some(r)) = nvs.get_u8("disprot") {
+                self.disp_rot = r & 3;
+            }
+            if let Ok(Some(f)) = nvs.get_u8("dispflip") {
+                self.disp_flip_h = f & 1 != 0;
+                self.disp_flip_v = f & 2 != 0;
+            }
+        }
+    }
+
+    /// Apply a display-orientation change (rotation 0..3, flips). Persists and
+    /// bumps disp_ver so the display task re-applies it live (no reboot).
+    pub fn apply_disp(&mut self, rot: u8, flip_h: bool, flip_v: bool) {
+        self.disp_rot = rot & 3;
+        self.disp_flip_h = flip_h;
+        self.disp_flip_v = flip_v;
+        self.disp_ver = self.disp_ver.wrapping_add(1);
+        if let Some(nvs) = self.nvs.as_mut() {
+            let _ = nvs.set_u8("disprot", self.disp_rot);
+            let _ = nvs.set_u8("dispflip", (flip_h as u8) | ((flip_v as u8) << 1));
         }
     }
 
@@ -268,18 +299,20 @@ impl AppState {
         let board = option_env!("PITHDDU_BOARD").unwrap_or("xiao_s3");
         let p = &self.pins;
         format!(
-            "{{\"name\":\"Pith DDU\",\"fw\":\"0.9.6\",\"board\":\"{board}\",\"serial\":\"{serial}\",\"buttonPages\":{bp},\
+            "{{\"name\":\"Pith DDU\",\"fw\":\"0.9.7\",\"board\":\"{board}\",\"serial\":\"{serial}\",\"buttonPages\":{bp},\
 \"screens\":[{{\"role\":\"main\",\"w\":480,\"h\":320,\"touch\":true}},\
 {{\"role\":\"side\",\"w\":480,\"h\":320,\"touch\":true}}],\
 \"leds\":{{\"rev\":{lr},\"tc\":{lt},\"abs\":{la},\"separate\":true}},\
 \"pins\":{{\"sclk\":{sclk},\"mosi\":{mosi},\"miso\":{miso},\"dc\":{dc},\
 \"disp1_cs\":{d1},\"disp2_cs\":{d2},\"touch1_cs\":{t1},\"touch2_cs\":{t2},\"led_din\":{din},\
-\"race_screen\":{rs},\"led_rev\":{lr},\"led_tc\":{lt},\"led_abs\":{la},\"led_rgbw\":{lw}}}}}\n",
+\"race_screen\":{rs},\"led_rev\":{lr},\"led_tc\":{lt},\"led_abs\":{la},\"led_rgbw\":{lw}}},\
+\"disp\":{{\"rot\":{rot},\"fh\":{fh},\"fv\":{fv}}}}}\n",
             bp = self.button_pages,
             lr = p.led_rev, lt = p.led_tc, la = p.led_abs, lw = p.led_rgbw,
             sclk = p.sclk, mosi = p.mosi, miso = p.miso, dc = p.dc,
             d1 = p.disp1_cs, d2 = p.disp2_cs, t1 = p.touch1_cs, t2 = p.touch2_cs,
             din = p.led_din, rs = p.race_screen,
+            rot = self.disp_rot, fh = self.disp_flip_h, fv = self.disp_flip_v,
         )
     }
 }

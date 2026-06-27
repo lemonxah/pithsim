@@ -177,6 +177,9 @@ pub struct State {
     pub led_tc: i32,
     pub led_abs: i32,
     pub led_rgbw: i32,
+    pub disp_rot: i32,     // 0..3 = 0/90/180/270°
+    pub disp_flip_h: bool,
+    pub disp_flip_v: bool,
     pub boards: Vec<BoardDef>,
     pub board: i32,
 
@@ -243,6 +246,9 @@ impl Default for State {
             gear_ch: 'N',
             pin_gpio: vec![7, 9, 8, 2, 1, 3, 5, 6, 43],
             race_screen: 0,
+            disp_rot: 3,
+            disp_flip_h: true,
+            disp_flip_v: false,
             led_rev: 12,
             led_tc: 2,
             led_abs: 2,
