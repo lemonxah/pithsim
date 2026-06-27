@@ -17,7 +17,7 @@ use esp_idf_svc::hal::delay::Ets;
 use esp_idf_svc::hal::gpio::{AnyIOPin, Output, PinDriver};
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::spi::{
-    config::Config as SpiConfig, SpiDeviceDriver, SpiDriver, SpiDriverConfig,
+    config::Config as SpiConfig, Dma, SpiDeviceDriver, SpiDriver, SpiDriverConfig,
 };
 use esp_idf_svc::hal::units::FromValueType;
 use mipidsi::interface::SpiInterface;
@@ -96,7 +96,8 @@ fn display_task() {
         unsafe { AnyIOPin::new(pins.sclk) },
         unsafe { AnyIOPin::new(pins.mosi) },
         Some(unsafe { AnyIOPin::new(pins.miso) }),
-        &SpiDriverConfig::new(),
+        // DMA so big display flushes don't crawl on the CPU.
+        &SpiDriverConfig::new().dma(Dma::Auto(8192)),
     ) {
         Ok(d) => d,
         Err(e) => {
@@ -117,18 +118,22 @@ fn display_task() {
     let mut t1 = SpiDeviceDriver::new(&driver, Some(unsafe { AnyIOPin::new(pins.touch1_cs) }), &touch_cfg).expect("t1");
     let mut t2 = SpiDeviceDriver::new(&driver, Some(unsafe { AnyIOPin::new(pins.touch2_cs) }), &touch_cfg).expect("t2");
 
-    let mut buf1 = [0u8; 512];
-    let mut buf2 = [0u8; 512];
+    // Large per-display SPI scratch so mipidsi streams big chunks: 512 bytes was
+    // only 256 px/flush, so a full redraw took ~600 transactions and you could
+    // watch it paint. Heap-allocated (the task stack is just 12 KB); DMA above
+    // makes each flush fast.
+    let buf1: &'static mut [u8] = vec![0u8; 16384].leak();
+    let buf2: &'static mut [u8] = vec![0u8; 16384].leak();
     let mut delay = Ets;
-    let mut disp1 = Builder::new(ST7796, SpiInterface::new(dev1, dc.clone(), &mut buf1))
+    let mut disp1 = Builder::new(ST7796, SpiInterface::new(dev1, dc.clone(), buf1))
         .display_size(320, 480)
-        .orientation(Orientation::new().rotate(Rotation::Deg90))
+        .orientation(Orientation::new().rotate(Rotation::Deg270))
         .invert_colors(ColorInversion::Normal)
         .init(&mut delay)
         .expect("disp1");
-    let mut disp2 = Builder::new(ST7796, SpiInterface::new(dev2, dc.clone(), &mut buf2))
+    let mut disp2 = Builder::new(ST7796, SpiInterface::new(dev2, dc.clone(), buf2))
         .display_size(320, 480)
-        .orientation(Orientation::new().rotate(Rotation::Deg90))
+        .orientation(Orientation::new().rotate(Rotation::Deg270))
         .invert_colors(ColorInversion::Normal)
         .init(&mut delay)
         .expect("disp2");
