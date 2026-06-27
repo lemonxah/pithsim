@@ -5,8 +5,8 @@ use super::{model, pal, sstr};
 use crate::catalog::{mod_name, CATALOG};
 use crate::state::{ModSpec, State};
 use crate::telemetry::{
-    field_id_from_str, fmtc_format, idx_of, op_from_str, rule_match, Fmt, FIELD_COUNT,
-    FIELD_FIELD_SIZE, FIELD_POSITION, FIELD_REGISTRY, FMT_NAMES, KIND_OPTIONS, OP_NAMES,
+    field_def, field_id_from_str, fmtc_format, idx_of, op_from_str, rule_match, Fmt, FIELDS,
+    FIELD_COUNT, FIELD_FIELD_SIZE, FIELD_POSITION, FMT_NAMES, KIND_OPTIONS, OP_NAMES,
     PALETTE_TOKENS,
 };
 use crate::{
@@ -150,19 +150,16 @@ fn resolve_value(s: &State, m: &ModSpec) -> (String, i32) {
     } else {
         0
     };
+    let def = field_def(id);
     let fmt = if !m.fmt_type.is_empty() {
         crate::telemetry::fmt_from_str(&m.fmt_type)
-    } else if id != 0 {
-        FIELD_REGISTRY[id].fmt
     } else {
-        Fmt::Int
+        def.map(|d| d.fmt).unwrap_or(Fmt::Int)
     };
     let sc = if m.scale > 0 {
         m.scale
-    } else if id != 0 {
-        FIELD_REGISTRY[id].scale
     } else {
-        1
+        def.map(|d| d.scale).unwrap_or(1)
     };
     (fmtc_format(iv, fmt, sc, &m.unit), iv)
 }
@@ -252,9 +249,7 @@ pub fn push_edit_module(ui: &AppWindow, s: &State) {
 
 pub fn push_editor_options(ui: &AppWindow, _s: &State) {
     let rl = ui.global::<RaceLayout>();
-    let fields: Vec<SharedString> = (1..FIELD_COUNT)
-        .map(|i| sstr(FIELD_REGISTRY[i].name))
-        .collect();
+    let fields: Vec<SharedString> = FIELDS.iter().map(|f| sstr(f.name)).collect();
     let kinds: Vec<SharedString> = KIND_OPTIONS.iter().map(|k| sstr(k)).collect();
     let palette: Vec<SharedString> = PALETTE_TOKENS.iter().map(|p| sstr(p)).collect();
     let fmts: Vec<SharedString> = FMT_NAMES.iter().map(|f| sstr(f)).collect();

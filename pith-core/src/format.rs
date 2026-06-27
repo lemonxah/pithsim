@@ -8,6 +8,7 @@
 //! to the C version — the host tests in this crate lock that down.
 
 /// Value format types. Order matches the C `fmt_type_t` enum and `FMT_NAMES`.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Fmt {
     Int = 0,  // integer, value/scale
@@ -20,6 +21,7 @@ pub enum Fmt {
 }
 
 /// Color-rule comparison ops. Order matches the C `rule_op_t` enum and `OP_NAMES`.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum RuleOp {
     Lt = 0, // <
@@ -31,6 +33,7 @@ pub enum RuleOp {
 
 /// Shared palette tokens. Order matches the C `pal_token_t` enum and `PAL_NAMES`.
 /// Each side maps these to its own color space.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Pal {
     Bg = 0,

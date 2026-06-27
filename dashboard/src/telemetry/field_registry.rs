@@ -1,25 +1,15 @@
-use super::format::Fmt;
+//! Telemetry field registry — the table, `FieldDef`, `FIELD_COUNT`, and lookups
+//! come from `pith-core` (the single source of truth, generated from the firmware's
+//! field_registry.json). Only the `FIELD_<NAME>` id constants are generated here,
+//! for ergonomic `telem[FIELD_X]` indexing.
 
-pub struct FieldDef {
-    pub name: &'static str,
-    pub fmt: Fmt,
-    pub scale: i32,
-    #[allow(dead_code)]
-    pub label: &'static str,
-}
+pub use pith_core::format::Fmt;
+pub use pith_core::registry::{field_def, field_id_from_str, FIELDS, FIELD_COUNT};
 
+// FIELD_NONE + FIELD_<NAME> id constants (1-based; 0 = none). Several are
+// device-only fields the dashboard doesn't index, hence allow-dead.
 #[allow(dead_code)]
-mod gen {
-    use super::{FieldDef, Fmt};
-    include!(concat!(env!("OUT_DIR"), "/field_registry_gen.rs"));
+mod ids {
+    include!(concat!(env!("OUT_DIR"), "/field_ids.rs"));
 }
-pub use gen::*;
-
-pub fn field_id_from_str(s: &str) -> usize {
-    for i in 1..FIELD_COUNT {
-        if FIELD_REGISTRY[i].name == s {
-            return i;
-        }
-    }
-    FIELD_NONE
-}
+pub use ids::*;

@@ -3804,6 +3804,7 @@ dependencies = [
 name = "pith-core"
 version = "0.9.5"
 dependencies = [
+ "serde",
  "serde_json",
 ]
 
@@ -3816,6 +3817,7 @@ dependencies = [
  "hidapi",
  "ksni",
  "libc",
+ "pith-core",
  "pith-ui",
  "reqwest",
  "serde",
@@ -3833,6 +3835,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-graphics",
  "image",
+ "pith-core",
  "postcard",
  "serde",
 ]

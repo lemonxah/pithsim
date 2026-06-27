@@ -12,8 +12,10 @@ name = "pith-dashboard"
 path = "src/main.rs"
 
 [dependencies]
-# Shared runtime UI engine (workspace crate). `std` gives us the framebuffer target
-# for the in-app preview.
+# Shared crates (workspace). pith-core = byte-compat telemetry formatting + field
+# registry (single source of truth); pith-ui = runtime UI engine (`std` gives the
+# framebuffer target for the in-app preview).
+pith-core = { path = "../pith-core" }
 pith-ui = { path = "../pith-ui", features = ["std"] }
 slint = { version = "1.17", default-features = false, features = ["backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "compat-1-2", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs"] }
@@ -38,11 +40,6 @@ ksni = { version = "0.3", default-features = false, features = ["async-io"] }
 [build-dependencies]
 slint-build = "1.17"
 serde_json = "1"
-
-[profile.release]
-opt-level = 2
-strip = true
-codegen-units = 1
 
 # `cargo deb` packaging (replaces the old CPack DEB rules). The Slint runtime is
 # statically linked into the binary, so there's no vendored .so to ship.

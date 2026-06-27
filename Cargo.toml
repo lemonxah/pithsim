@@ -9,3 +9,8 @@
 resolver = "2"
 members = ["dashboard", "pith-core", "pith-ui"]
 exclude = ["firmware"]
+
+[profile.release]
+opt-level = 2
+strip = true
+codegen-units = 1

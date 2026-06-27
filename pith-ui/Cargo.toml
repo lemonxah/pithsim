@@ -4,14 +4,18 @@ version = "0.1.0"
 edition = "2021"
 description = "Pure-Rust runtime-interpreted UI engine for the Pith DDU (no_std). A UI is a serialized document (postcard) interpreted + rendered at runtime via embedded-graphics — no recompile to change screens. Shared by the firmware (device render) and the dashboard (desktop preview/editor)."
 license = "BSD-3-Clause"
-repository = "https://github.com/lemonxah/pithddu-firmware"
+repository = "https://github.com/lemonxah/pithddu"
 
 [features]
 default = []
-# Desktop side (dashboard preview + examples): pulls in std + a framebuffer DrawTarget.
+# Desktop side (dashboard preview + examples): adds the framebuffer DrawTarget +
+# std serialization helpers. (The device target is esp-idf, which has std too.)
 std = ["serde/std", "postcard/use-std"]
 
 [dependencies]
+# Shared logic: telemetry field registry + byte-compat value formatting + the
+# serde-able Fmt/RuleOp enums the UiDoc binds to.
+pith-core = { path = "../pith-core", features = ["serde"] }
 embedded-graphics = "0.8"
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 postcard = { version = "1", default-features = false, features = ["alloc"] }

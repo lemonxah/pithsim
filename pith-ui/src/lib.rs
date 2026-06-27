@@ -1,13 +1,14 @@
-#![cfg_attr(not(feature = "std"), no_std)]
-
 //! pith-ui — a pure-Rust, runtime-interpreted UI engine.
 //!
-//! A screen is described by a [`UiDoc`]: a serializable tree of [`Node`]s. The doc
-//! is serialized with `postcard` (compact, no_std) and **interpreted + rendered at
-//! runtime** against any `embedded_graphics::DrawTarget` — so the device can change
-//! screens by loading a new blob from flash or the wire, with no recompile. The
-//! exact same engine renders on the ESP32 panels and in the desktop dashboard
-//! preview (see the `std`-gated [`Framebuffer`]).
+//! A screen is described by a [`UiDoc`]: a serializable tree of [`Node`]s,
+//! serialized with `postcard` and **interpreted + rendered at runtime** against any
+//! `embedded_graphics::DrawTarget` — so the device changes screens by loading a new
+//! blob from flash or the wire, with no recompile. The same engine renders on the
+//! ESP32 panels and in the desktop preview (the `std`-gated [`Framebuffer`]).
+//!
+//! `Stat` values can be **bound to live telemetry fields** ([`Bind::Field`]),
+//! resolved + formatted at render time via `pith-core` (the shared, byte-compatible
+//! formatting + field registry). The device target is esp-idf, which provides std.
 
 extern crate alloc;
 
@@ -22,6 +23,10 @@ use embedded_graphics::{
     text::{Alignment, Baseline, Text, TextStyleBuilder},
 };
 use serde::{Deserialize, Serialize};
+
+use pith_core::format::format as fmt_value;
+pub use pith_core::format::{Fmt, RuleOp};
+use pith_core::registry::field_def;
 
 /// 8-bit RGB; converted to the device's RGB565 at render time.
 pub type Color = (u8, u8, u8);
@@ -71,6 +76,25 @@ pub enum Halign {
     Right,
 }
 
+/// A stat's value: static text, or a live telemetry field formatted at render time.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub enum Bind {
+    /// Fixed text.
+    Text(String),
+    /// Live telemetry: 1-based field-registry id. `fmt`/`scale`/`unit` override the
+    /// registry defaults (None / 0 / "" => use the field's default).
+    Field { id: u8, fmt: Option<Fmt>, scale: i32, unit: String },
+}
+
+/// A colour rule: when `op(value, threshold)` holds, the value is drawn in `color`
+/// (first matching rule wins; otherwise the stat's base colour).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct Rule {
+    pub op: RuleOp,
+    pub threshold: i32,
+    pub color: Color,
+}
+
 /// What a node draws. New kinds are added here (and in [`draw_kind`]); the wire
 /// format stays the same shape, so adding a widget needs no protocol change.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -79,8 +103,10 @@ pub enum Kind {
     Panel { color: Color, radius: u32 },
     /// A single line of text.
     Label { text: String, color: Color, font: Font, align: Halign },
-    /// A small caption above a large value (the workhorse "stat" tile).
-    Stat { label: String, value: String, label_color: Color, value_color: Color },
+    /// A small caption above a large value (the workhorse "stat" tile). The value is
+    /// static text or a live field; `color` is the base value colour, overridden by
+    /// the first matching `rule`.
+    Stat { label: String, value: Bind, label_color: Color, color: Color, rules: Vec<Rule> },
     /// Horizontal progress/level bar, 0..=100.
     Bar { pct: u8, fill: Color, track: Color },
 }
@@ -122,59 +148,55 @@ impl UiDoc {
     }
 }
 
-/// A built-in sample race screen (480x320 main display) — for previews, tests, and
-/// bootstrapping editors before real layouts exist. Same engine, so it renders
-/// pixel-identically on the device and in the desktop preview.
-pub fn demo_doc() -> UiDoc {
-    const BG: Color = (6, 7, 8);
-    const PANEL: Color = (19, 21, 25);
-    const WHITE: Color = (232, 234, 237);
-    const DIM: Color = (99, 106, 116);
-    const GREEN: Color = (0, 230, 118);
-    const AMBER: Color = (255, 179, 0);
-    let stat = |x: i32, y: i32, w: u32, h: u32, label: &str, value: &str, vc: Color| Node {
-        rect: Rect { x, y, w, h },
-        kind: Kind::Stat { label: label.into(), value: value.into(), label_color: DIM, value_color: vc },
-    };
-    let panel = |x: i32, y: i32, w: u32, h: u32| Node {
-        rect: Rect { x, y, w, h },
-        kind: Kind::Panel { color: PANEL, radius: 12 },
-    };
-    let nodes = alloc::vec![
-        Node { rect: Rect { x: 8, y: 8, w: 464, h: 22 }, kind: Kind::Bar { pct: 82, fill: GREEN, track: PANEL } },
-        panel(150, 56, 180, 178),
-        stat(150, 60, 180, 120, "GEAR", "4", WHITE),
-        stat(150, 176, 180, 54, "KM/H", "212", GREEN),
-        panel(8, 56, 130, 84),
-        stat(8, 60, 130, 80, "DELTA", "-0.31", GREEN),
-        panel(342, 56, 130, 84),
-        stat(342, 60, 130, 80, "FUEL", "48.6", AMBER),
-        Node {
-            rect: Rect { x: 8, y: 284, w: 464, h: 28 },
-            kind: Kind::Label { text: "LAP  1:24.318".into(), color: WHITE, font: Font::Medium, align: Halign::Center },
-        },
-    ];
-    UiDoc { version: 1, screens: alloc::vec![Screen { display: 0, w: 480, h: 320, bg: BG, nodes }] }
+/// Resolve + format a bound value, returning (text, colour).
+fn resolve_bind(value: &Bind, base: Color, rules: &[Rule], telem: &impl Fn(u8) -> i32) -> (String, Color) {
+    match value {
+        Bind::Text(t) => (t.clone(), base),
+        Bind::Field { id, fmt, scale, unit } => {
+            let iv = telem(*id);
+            let def = field_def(*id as usize);
+            let f = fmt.unwrap_or_else(|| def.map(|d| d.fmt).unwrap_or(Fmt::Int));
+            let sc = if *scale > 0 { *scale } else { def.map(|d| d.scale).unwrap_or(1) };
+            let text = fmt_value(iv, f, sc, unit);
+            let color = rules
+                .iter()
+                .find(|r| r.op.matches(iv, r.threshold))
+                .map(|r| r.color)
+                .unwrap_or(base);
+            (text, color)
+        }
+    }
 }
 
-/// Render a screen onto any embedded-graphics RGB565 target (a device panel or the
-/// desktop [`Framebuffer`]).
+/// Render a screen with no live telemetry (bound fields resolve to 0).
 pub fn render_screen<D>(s: &Screen, target: &mut D) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
+{
+    render_screen_with(s, &|_| 0, target)
+}
+
+/// Render a screen, resolving [`Bind::Field`] values through `telem` (a
+/// `field id -> raw value` lookup). The firmware passes `field_value` over its
+/// telemetry struct; the dashboard passes its telemetry mirror.
+pub fn render_screen_with<D, F>(s: &Screen, telem: &F, target: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = Rgb565>,
+    F: Fn(u8) -> i32,
 {
     Rectangle::new(Point::zero(), Size::new(s.w, s.h))
         .into_styled(PrimitiveStyle::with_fill(col(s.bg)))
         .draw(target)?;
     for node in &s.nodes {
-        draw_kind(&node.rect, &node.kind, target)?;
+        draw_kind(&node.rect, &node.kind, telem, target)?;
     }
     Ok(())
 }
 
-fn draw_kind<D>(r: &Rect, kind: &Kind, t: &mut D) -> Result<(), D::Error>
+fn draw_kind<D, F>(r: &Rect, kind: &Kind, telem: &F, t: &mut D) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = Rgb565>,
+    F: Fn(u8) -> i32,
 {
     match kind {
         Kind::Panel { color, radius } => {
@@ -185,11 +207,12 @@ where
         Kind::Label { text, color, font, align } => {
             draw_text(t, text, r, font.style(*color), *align)?;
         }
-        Kind::Stat { label, value, label_color, value_color } => {
+        Kind::Stat { label, value, label_color, color, rules } => {
+            let (text, vcolor) = resolve_bind(value, *color, rules, telem);
             let cap = Rect { x: r.x, y: r.y, w: r.w, h: r.h / 3 };
             let val = Rect { x: r.x, y: r.y + (r.h / 3) as i32, w: r.w, h: r.h - r.h / 3 };
             draw_text(t, label, &cap, Font::Small.style(*label_color), Halign::Center)?;
-            draw_text(t, value, &val, Font::Large.style(*value_color), Halign::Center)?;
+            draw_text(t, &text, &val, Font::Large.style(vcolor), Halign::Center)?;
         }
         Kind::Bar { pct, fill, track } => {
             r.eg().into_styled(PrimitiveStyle::with_fill(col(*track))).draw(t)?;
@@ -223,9 +246,78 @@ where
     Ok(())
 }
 
+/// A built-in sample race screen (480x320 main display) with **live-bound** GEAR /
+/// speed / delta / fuel — for previews, tests, and bootstrapping editors. Feed it
+/// [`demo_telem`] (or any resolver) via [`render_screen_with`] to see live values.
+pub fn demo_doc() -> UiDoc {
+    const BG: Color = (6, 7, 8);
+    const PANEL: Color = (19, 21, 25);
+    const WHITE: Color = (232, 234, 237);
+    const DIM: Color = (99, 106, 116);
+    const GREEN: Color = (0, 230, 118);
+    const AMBER: Color = (255, 179, 0);
+    const RED: Color = (255, 59, 48);
+
+    let text_stat = |x: i32, y: i32, w: u32, h: u32, label: &str, value: &str, vc: Color| Node {
+        rect: Rect { x, y, w, h },
+        kind: Kind::Stat {
+            label: label.into(),
+            value: Bind::Text(value.into()),
+            label_color: DIM,
+            color: vc,
+            rules: alloc::vec![],
+        },
+    };
+    let field_stat = |x: i32, y: i32, w: u32, h: u32, label: &str, id: u8, vc: Color, rules: Vec<Rule>| Node {
+        rect: Rect { x, y, w, h },
+        kind: Kind::Stat {
+            label: label.into(),
+            value: Bind::Field { id, fmt: None, scale: 0, unit: String::new() },
+            label_color: DIM,
+            color: vc,
+            rules,
+        },
+    };
+    let panel = |x: i32, y: i32, w: u32, h: u32| Node {
+        rect: Rect { x, y, w, h },
+        kind: Kind::Panel { color: PANEL, radius: 12 },
+    };
+
+    let nodes = alloc::vec![
+        Node { rect: Rect { x: 8, y: 8, w: 464, h: 22 }, kind: Kind::Bar { pct: 82, fill: GREEN, track: PANEL } },
+        panel(150, 56, 180, 178),
+        text_stat(150, 60, 180, 120, "GEAR", "4", WHITE),
+        field_stat(150, 176, 180, 54, "KM/H", 1, GREEN, alloc::vec![]), // speed_kmh
+        panel(8, 56, 130, 84),
+        // delta_ms: green if ahead (<0), red if behind (>0)
+        field_stat(8, 60, 130, 80, "DELTA", 10, AMBER, alloc::vec![
+            Rule { op: RuleOp::Lt, threshold: 0, color: GREEN },
+            Rule { op: RuleOp::Gt, threshold: 0, color: RED },
+        ]),
+        panel(342, 56, 130, 84),
+        field_stat(342, 60, 130, 80, "FUEL", 23, AMBER, alloc::vec![]), // fuel_dl
+        Node {
+            rect: Rect { x: 8, y: 284, w: 464, h: 28 },
+            kind: Kind::Label { text: "LAP  1:24.318".into(), color: WHITE, font: Font::Medium, align: Halign::Center },
+        },
+    ];
+    UiDoc { version: 1, screens: alloc::vec![Screen { display: 0, w: 480, h: 320, bg: BG, nodes }] }
+}
+
+/// Demo telemetry resolver matching [`demo_doc`]'s bound fields (so previews show
+/// believable live values without a connected device).
+pub fn demo_telem(id: u8) -> i32 {
+    match id {
+        1 => 212,    // speed_kmh
+        10 => -3000, // delta_ms -> -0.3000 s
+        23 => 486,   // fuel_dl  -> 48.6 L
+        _ => 0,
+    }
+}
+
 /// A heap-backed RGB565 framebuffer + RGBA8 export — the desktop preview target
-/// (and what the dashboard will blit into a Slint image). Device builds don't need
-/// it, so it's behind the `std` feature.
+/// (and what the dashboard blits into a Slint image). Device builds don't need it,
+/// so it's behind the `std` feature.
 #[cfg(feature = "std")]
 mod framebuffer {
     use super::*;
