@@ -23,32 +23,82 @@ simhub-plugin sh="":
     echo "Building plugin against: $SH"
     dotnet build -c Release -p:SimHubPath="$SH" simhub-plugin/PithDdu.SimHubPlugin.csproj
 
-# Cut a release by tagging + pushing (CI builds the bins and publishes the GitHub Release).
-#   just release           -> bump the patch of the latest vX.Y.Z tag (0.1.0 if none)
-#   just release 1.2.3     -> release exactly that version
-release version="":
+# Build the in-prefix shared-memory tools (pith-shim.exe + pith-shmbridge.exe) for
+# Windows / Proton-Wine. Auto-adds the windows-gnu target; needs mingw-w64 installed
+# (e.g. `x86_64-w64-mingw32-gcc`). The crate is outside the host workspace.
+#   just shm-tools           -> build the two .exe
+#   just shm-tools install   -> build + copy exes + pith-shim-run into ~/pith/
+shm-tools action="":
     #!/usr/bin/env bash
     set -euo pipefail
+    rustup target list --installed | grep -qx x86_64-pc-windows-gnu \
+        || rustup target add x86_64-pc-windows-gnu
+    cargo build --release --manifest-path pith-shm-bridge/Cargo.toml \
+        --target x86_64-pc-windows-gnu
+    out="pith-shm-bridge/target/x86_64-pc-windows-gnu/release"
+    echo "Built:"
+    echo "  $out/pith-shim.exe"
+    echo "  $out/pith-shmbridge.exe"
+    act="{{action}}"; act="${act#action=}"   # tolerate `action=install`
+    if [ "$act" = "install" ]; then
+        mkdir -p "$HOME/pith"
+        cp "$out/pith-shim.exe" "$out/pith-shmbridge.exe" "$HOME/pith/"
+        cp pith-shm-bridge/pith-shim-run "$HOME/pith/" && chmod +x "$HOME/pith/pith-shim-run"
+        echo "Installed shim, bridge + pith-shim-run to $HOME/pith/"
+    fi
+
+# Show the current crate versions (from Cargo.toml) + the latest release tags.
+# Note: `just release` only creates/pushes a git tag — it does NOT edit Cargo.toml.
+version:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "crate versions (Cargo.toml):"
+    for f in dashboard firmware pith-core pith-ui pith-device pith-flash pith-shm-bridge; do
+        [ -f "$f/Cargo.toml" ] || continue
+        v=$(grep -m1 '^version' "$f/Cargo.toml" | sed -E 's/version *= *"([^"]+)".*/\1/')
+        printf "  %-16s %s\n" "$f" "${v:-?}"
+    done
+    echo "latest tags:"
+    git tag -l --sort=-v:refname 2>/dev/null | head -5 | sed 's/^/  /' || true
+
+# Cut a release for ONE stream: bump that crate's Cargo.toml version, commit, tag,
+# and push (CI builds the bins from the tag and publishes the GitHub Release). The
+# tag prefix + the crate version stay in sync.
+#   just release dashboard          -> bump patch of the latest dashboard-v* tag
+#   just release firmware           -> bump patch of the latest firmware-v* tag
+#   just release dashboard 1.2.3    -> release that stream exactly at 1.2.3
+release stream version="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    stream="{{stream}}"
+    case "$stream" in
+        dashboard) manifest="dashboard/Cargo.toml" ;;
+        firmware)  manifest="firmware/Cargo.toml" ;;
+        *) echo "usage: just release <dashboard|firmware> [version]" >&2; exit 1 ;;
+    esac
     git fetch --tags --quiet
     ver="{{version}}"
     if [ -z "$ver" ]; then
-        last=$(git tag -l 'v*' --sort=-v:refname | head -n1)
-        if [ -z "$last" ]; then
-            ver="0.1.0"
+        last=$(git tag -l "${stream}-v*" --sort=-v:refname | head -n1)
+        if [ -n "$last" ]; then
+            base=${last#${stream}-v}                 # bump the latest stream tag
         else
-            base=${last#v}
-            IFS='.' read -r MA MI PA <<<"$base"
-            ver="${MA:-0}.${MI:-0}.$(( ${PA:-0} + 1 ))"
-        fi
+            base=$(grep -m1 '^version' "$manifest" | sed -E 's/version *= *"([^"]+)".*/\1/')
+        fi                                            # no tag yet → bump Cargo.toml
+        IFS='.' read -r MA MI PA <<<"$base"
+        ver="${MA:-0}.${MI:-0}.$(( ${PA:-0} + 1 ))"
     fi
     ver=${ver#v}
-    tag="v${ver}"
+    tag="${stream}-v${ver}"
     if git rev-parse "$tag" >/dev/null 2>&1; then
         echo "tag $tag already exists — pick another version" >&2
         exit 1
     fi
+    # Bump the crate's [package] version (the first version line in its Cargo.toml).
+    sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${ver}\"/" "$manifest"
     branch=$(git rev-parse --abbrev-ref HEAD)
     echo "Releasing $tag from $branch @ $(git rev-parse --short HEAD)"
-    git tag -a "$tag" -m "release $tag"
-    git push origin "$tag"
-    echo "Pushed $tag — GitHub Actions will build and publish the release."
+    git commit -m "release: ${stream} v${ver}" -- "$manifest"
+    git tag -a "$tag" -m "release ${tag}"
+    git push origin "$branch" "$tag"
+    echo "Pushed $branch + $tag — GitHub Actions will build and publish the release."
