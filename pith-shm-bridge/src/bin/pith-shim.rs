@@ -55,9 +55,10 @@ fn main() {
             if ticks % 100 == 0 {
                 if let Some(t) = pith_core::simhub::parse_line(&r.frame) {
                     println!(
-                        "pith-shim [{}] gear={} rpm={} kmh={} tc={} abs={} pit={} lights={} fuel={}",
+                        "pith-shim [{}] gear={} rpm={} kmh={} tc={} abs={} (act {}/{}) delta={:.3} batt={} pit={} fuel={}",
                         r.label, t.gear as char, t.rpm, t.speed_kmh, t.tc, t.abs,
-                        t.pit_limiter, t.headlights, t.fuel_dl,
+                        t.tc_active, t.abs_active, t.delta_ms as f32 / 10000.0,
+                        t.battery_pct, t.pit_limiter, t.fuel_dl,
                     );
                 }
             }

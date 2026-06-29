@@ -502,13 +502,15 @@ fn draw_kind<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, kind: &Kind, t:
             }
         }
         Kind::TyreGrid => {
+            // Temps are 0.1°C (carcass core). Thresholds in 0.1°C: >95°C / >80°C.
             let temps = [t.tt_fl_m, t.tt_fr_m, t.tt_rl_m, t.tt_rr_m];
             let (bw, bh) = (w / 2, h / 2);
             for i in 0..4 {
                 let (cxx, cyy) = (x + (i as i32 % 2) * bw, y + (i as i32 / 2) * bh);
-                let col = if temps[i] > 95 { pal(Pal::Red) } else if temps[i] > 80 { pal(Pal::Amber) } else { pal(Pal::Green) };
+                let col = if temps[i] > 950 { pal(Pal::Red) } else if temps[i] > 800 { pal(Pal::Amber) } else { pal(Pal::Green) };
                 fill_round(d, cxx + 2, cyy + 2, bw - 4, bh - 4, 4, pal(Pal::Panel));
-                text(d, &temps[i].to_string(), cxx + bw / 2, cyy + bh / 2, 14, col, HorizontalAlignment::Center, VerticalPosition::Center);
+                let s = format::format(temps[i], Fmt::Fixed1, 10, "°C");
+                text(d, &s, cxx + bw / 2, cyy + bh / 2, 13, col, HorizontalAlignment::Center, VerticalPosition::Center);
             }
         }
         Kind::TcDual => {
@@ -1155,10 +1157,10 @@ pub fn demo_telem() -> Telemetry {
     t.field_size = 20;
     t.cur_lap_ms = 84318;
     t.best_lap_ms = 82900;
-    t.tt_fl_m = 88;
-    t.tt_fr_m = 90;
-    t.tt_rl_m = 97;
-    t.tt_rr_m = 86;
+    t.tt_fl_m = 880; // 0.1°C
+    t.tt_fr_m = 900;
+    t.tt_rl_m = 970;
+    t.tt_rr_m = 860;
     t
 }
 

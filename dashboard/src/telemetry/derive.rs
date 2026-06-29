@@ -1,29 +1,24 @@
 //! Dashboard-side derived telemetry: core fields no game transmits directly but
 //! that we can compute from the stream — **best lap** (min completed lap),
-//! **current lap time** (wall-clock since the lap rolled, for sources that lack
-//! it), **fuel per lap / laps-left** (fuel burn across laps) and a **lap delta**
+//! **fuel per lap / laps-left** (fuel burn across laps) and a **lap delta**
 //! (current pace vs best, by track position). Each only fills a field the source
 //! left empty, so a source that *does* provide it always wins.
-
-use std::sync::OnceLock;
-use std::time::Instant;
+//!
+//! NOTE: we deliberately do NOT estimate current-lap time. A wall-clock estimate
+//! has no idea when the game is paused/stopped or has no laps at all (Forza
+//! free-roam), so it just counts up forever. Current lap is shown only when a
+//! source provides a real game timer (rF2/LMU derive it from the session clock,
+//! ACC reads it, etc.); otherwise it stays blank.
 
 use pith_core::simhub::Telemetry;
 
-/// Monotonic milliseconds since first use (for wall-clock lap timing).
-fn now_ms() -> u64 {
-    static EPOCH: OnceLock<Instant> = OnceLock::new();
-    EPOCH.get_or_init(Instant::now).elapsed().as_millis() as u64
-}
-
 /// Which computed fields a telemetry source actually supplies. Sticky per source
-/// (set once a source sends a real value, so a momentary 0 — delta on-pace,
-/// current-lap at the line — doesn't make us think the source dropped it). When a
-/// field is supplied by ANY live source we must NOT compute our own, even if this
-/// frame's merged value is 0: our tracker's state is stale and would emit garbage.
+/// (set once a source sends a real value, so a momentary 0 — delta on-pace — doesn't
+/// make us think the source dropped it). When a field is supplied by ANY live
+/// source we must NOT compute our own, even if this frame's merged value is 0: our
+/// tracker's state is stale and would emit garbage.
 #[derive(Default, Clone, Copy)]
 pub struct Provided {
-    pub cur_lap: bool,
     pub best_lap: bool,
     pub delta: bool,
     pub fuel_per_lap: bool,
@@ -32,14 +27,12 @@ pub struct Provided {
 impl Provided {
     /// Mark every field this frame carries a real (non-zero) value for. Sticky.
     pub fn observe(&mut self, t: &Telemetry) {
-        self.cur_lap |= t.cur_lap_ms != 0;
         self.best_lap |= t.best_lap_ms != 0;
         self.delta |= t.delta_ms != 0;
         self.fuel_per_lap |= t.fuel_per_lap_ml != 0;
     }
     pub fn merge(self, o: Provided) -> Provided {
         Provided {
-            cur_lap: self.cur_lap || o.cur_lap,
             best_lap: self.best_lap || o.best_lap,
             delta: self.delta || o.delta,
             fuel_per_lap: self.fuel_per_lap || o.fuel_per_lap,
@@ -50,14 +43,13 @@ impl Provided {
 /// All derived-field trackers, run in order each frame.
 pub struct Derived {
     best: BestLap,
-    cur: CurLap,
     fuel: Fuel,
     delta: Delta,
 }
 
 impl Default for Derived {
     fn default() -> Self {
-        Self { best: BestLap::default(), cur: CurLap::default(), fuel: Fuel::default(), delta: Delta::default() }
+        Self { best: BestLap::default(), fuel: Fuel::default(), delta: Delta::default() }
     }
 }
 
@@ -67,9 +59,6 @@ impl Derived {
     pub fn update(&mut self, t: &mut Telemetry, provided: Provided) {
         if !provided.best_lap {
             self.best.update(t); // best needs last_lap; run before delta
-        }
-        if !provided.cur_lap {
-            self.cur.update(t); // current-lap time before delta (delta uses it)
         }
         self.fuel.update(t, provided.fuel_per_lap);
         if !provided.delta {
@@ -102,29 +91,6 @@ impl BestLap {
     }
 }
 
-/// Current lap time by wall clock (for sources with a lap counter but no live
-/// lap time, e.g. GT7). Approximate — keeps running if the game is paused.
-#[derive(Default)]
-struct CurLap {
-    started: bool,
-    last_lap: i32,
-    lap_start_ms: u64,
-}
-
-impl CurLap {
-    fn update(&mut self, t: &mut Telemetry) {
-        if t.cur_lap_ms > 0 {
-            return; // source provides it
-        }
-        let now = now_ms();
-        if !self.started || t.laps_done != self.last_lap {
-            self.started = true;
-            self.last_lap = t.laps_done;
-            self.lap_start_ms = now;
-        }
-        t.cur_lap_ms = now.saturating_sub(self.lap_start_ms) as i32;
-    }
-}
 
 /// Fuel burned per completed lap → `fuel_per_lap_ml` + `fuel_laps_x10`.
 #[derive(Default)]

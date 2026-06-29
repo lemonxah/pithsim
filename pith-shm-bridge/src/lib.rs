@@ -16,6 +16,9 @@ pub const R3E: &[&str] = &["$R3E", "Local\\$R3E"];
 pub const RF2_TELEMETRY: &[&str] = &["$rFactor2SMMP_Telemetry$", "Local\\$rFactor2SMMP_Telemetry$"];
 pub const RF2_SCORING: &[&str] = &["$rFactor2SMMP_Scoring$", "Local\\$rFactor2SMMP_Scoring$"];
 pub const RF2_EXTENDED: &[&str] = &["$rFactor2SMMP_Extended$", "Local\\$rFactor2SMMP_Extended$"];
+/// LMU's own native shared memory (1.3+): live TC/ABS levels, the game's delta,
+/// virtual energy, battery — none of which TheIronWolf's rF2 plugin exposes live.
+pub const LMU_DATA: &[&str] = &["LMU_Data", "Local\\LMU_Data", "Global\\LMU_Data"];
 
 /// What the shim sends each tick: the `$`-frame plus optional identity and an
 /// optional `@REL` relatives/standings line.
@@ -36,7 +39,11 @@ pub fn read_frame() -> Option<ShimRead> {
     if let (Some(t), Some(s)) = (win::read_any(RF2_TELEMETRY), win::read_any(RF2_SCORING)) {
         if let Some(mut tel) = shm::parse_rf2(&t, &s) {
             if let Some(ext) = win::read_any(RF2_EXTENDED) {
-                shm::apply_rf2_extended(&mut tel, &ext); // TC/ABS levels
+                shm::apply_rf2_extended(&mut tel, &ext); // static TC/ABS assist setting
+            }
+            // LMU 1.3+ native map: overlays LIVE TC/ABS levels + the game's own delta.
+            if let Some(lmu) = win::read_any(LMU_DATA) {
+                shm::apply_lmu_native(&mut tel, &lmu);
             }
             let (car, track) = shm::rf2_identity(&t, &s);
             let relatives = pith_core::relatives::parse_rf2_relatives(&s).map(|r| r.to_wire());

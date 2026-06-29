@@ -125,6 +125,48 @@ pub fn apply_rf2_extended(t: &mut Telemetry, ext: &[u8]) {
     t.abs = ext[25] as i32; // mAntiLockBrakes (0..2)
 }
 
+/// Overlay **LMU's NATIVE shared memory** (`LMU_Data`) onto an rF2-plugin-derived
+/// snapshot. LMU 1.3+ writes its own map (separate from TheIronWolf's
+/// `$rFactor2SMMP_*$`) carrying the data the rF2 plugin lacks LIVE: in-car TC/ABS
+/// **levels** + activation, the game's own lap delta, battery SoC, wiper state. The
+/// rF2 plugin's `mPhysics` only has the static assist *setting* — this is what the
+/// in-game HUD / SimHub actually read. Base telemetry (gear/rpm/fuel/temps) is left
+/// to the rF2 plugin. Layout per S397's `SharedMemoryInterface.hpp` (mirrored by
+/// TinyPedal/pyLMUSharedMemory): telemetry@128464, playerVehicleIdx@128465,
+/// telemInfo[]@128468 stride 1888; per-entry offsets below. `#pragma pack(4)`.
+pub fn apply_lmu_native(t: &mut Telemetry, b: &[u8]) {
+    const PLAYER_IDX: usize = 128465;
+    const ENTRIES: usize = 128468;
+    const STRIDE: usize = 1888;
+    if b.len() <= PLAYER_IDX || b[128464] == 0 {
+        return; // too short / no active vehicles
+    }
+    let idx = b[PLAYER_IDX] as usize;
+    if idx >= 104 {
+        return;
+    }
+    let base = ENTRIES + idx * STRIDE;
+    if b.len() < base + STRIDE {
+        return;
+    }
+    // Live in-car aid LEVELS + activation flags (the values on the wheel HUD).
+    t.abs_active = (b[base + 746] != 0) as i32; // mABSActive
+    t.tc_active = (b[base + 747] != 0) as i32; // mTCActive
+    t.wipers = b[base + 749] as i32; // mWiperState (0 off,1 auto,2 slow,3 fast)
+    t.tc = b[base + 750] as i32; // mTC (current level)
+    t.abs = b[base + 756] as i32; // mABS (current level)
+    // The game's own lap delta (mDeltaBest, double seconds, neg = ahead) → 0.1 ms.
+    let dbest = le::f64(b, base + 696);
+    if dbest.is_finite() && dbest.abs() < 600.0 {
+        t.delta_ms = (dbest * 10000.0).round() as i32;
+    }
+    // Battery state of charge (mBatteryChargeFraction, double 0..1).
+    let soc = le::f64(b, base + 704);
+    if soc.is_finite() && (0.0..=1.0).contains(&soc) {
+        t.battery_pct = (soc * 1000.0).round() as i32;
+    }
+}
+
 /// Car model + track from the rF2 / LMU scoring buffer: `mTrackName` (ASCII) at
 /// file offset 16; the player's `mVehicleName` at `560 + i*584 + 36` (player
 /// element found via `mIsPlayer@196`). Plain NUL-terminated `char`.
@@ -181,6 +223,7 @@ fn non_empty(s: String) -> Option<String> {
 }
 
 fn set_tyre(t: &mut Telemetry, fl: i32, fr: i32, rl: i32, rr: i32) {
+    let (fl, fr, rl, rr) = (fl * 10, fr * 10, rl * 10, rr * 10); // °C → 0.1°C
     t.tt_fl_i = fl; t.tt_fl_m = fl; t.tt_fl_o = fl;
     t.tt_fr_i = fr; t.tt_fr_m = fr; t.tt_fr_o = fr;
     t.tt_rl_i = rl; t.tt_rl_m = rl; t.tt_rl_o = rl;
@@ -335,28 +378,29 @@ pub fn parse_rf2(telem: &[u8], scoring: &[u8]) -> Option<Telemetry> {
         t.battery_pct = (batt * 1000.0).round().clamp(0.0, 1000.0) as i32;
     }
     t.ers_state = telem[base + 736] as i32;
-    // Per-wheel (FL,FR,RL,RR @ base+848 stride 260): centre temp[1]@+136 (Kelvin),
-    // brake temp@+24 (°C), pressure@+120 (kPa).
-    let k2c = |k: f64| (k - 273.15).round() as i32;
-    for (i, (tt, bt, tp)) in [
-        (&mut t.tt_fl_m, &mut t.bt_fl, &mut t.tp_fl),
-        (&mut t.tt_fr_m, &mut t.bt_fr, &mut t.tp_fr),
-        (&mut t.tt_rl_m, &mut t.bt_rl, &mut t.tp_rl),
-        (&mut t.tt_rr_m, &mut t.bt_rr, &mut t.tp_rr),
+    // Per-wheel (FL,FR,RL,RR @ base+848 stride 260). Tyre temps in 0.1°C:
+    // **carcass** (mTireCarcassTemperature@204, Kelvin) is the stable core temp the
+    // in-game HUD shows → the headline `_m`; the surface tread L/R (mTemperature
+    // [0]@128 / [2]@144) give the inner/outer gradient. Brake temp@+24 (°C),
+    // pressure@+120 (kPa), wear (mWear@152, 0..1 fraction remaining) → %.
+    let k2dc = |k: f64| ((k - 273.15) * 10.0).round() as i32; // Kelvin → 0.1°C
+    for (i, (ti, tm, to, bt, tp, tw)) in [
+        (&mut t.tt_fl_i, &mut t.tt_fl_m, &mut t.tt_fl_o, &mut t.bt_fl, &mut t.tp_fl, &mut t.tw_fl),
+        (&mut t.tt_fr_i, &mut t.tt_fr_m, &mut t.tt_fr_o, &mut t.bt_fr, &mut t.tp_fr, &mut t.tw_fr),
+        (&mut t.tt_rl_i, &mut t.tt_rl_m, &mut t.tt_rl_o, &mut t.bt_rl, &mut t.tp_rl, &mut t.tw_rl),
+        (&mut t.tt_rr_i, &mut t.tt_rr_m, &mut t.tt_rr_o, &mut t.bt_rr, &mut t.tp_rr, &mut t.tw_rr),
     ]
     .into_iter()
     .enumerate()
     {
         let w = base + 848 + i * 260;
-        *tt = k2c(le::f64(telem, w + 136));
+        *ti = k2dc(le::f64(telem, w + 128)); // surface tread left
+        *tm = k2dc(le::f64(telem, w + 204)); // carcass core (headline)
+        *to = k2dc(le::f64(telem, w + 144)); // surface tread right
         *bt = le::f64(telem, w + 24).round() as i32;
         *tp = le::f64(telem, w + 120).round() as i32;
+        *tw = (le::f64(telem, w + 152) * 100.0).round().clamp(0.0, 100.0) as i32;
     }
-    // Mirror the centre tyre temp into the inner/outer zones.
-    t.tt_fl_i = t.tt_fl_m; t.tt_fl_o = t.tt_fl_m;
-    t.tt_fr_i = t.tt_fr_m; t.tt_fr_o = t.tt_fr_m;
-    t.tt_rl_i = t.tt_rl_m; t.tt_rl_o = t.tt_rl_m;
-    t.tt_rr_i = t.tt_rr_m; t.tt_rr_o = t.tt_rr_m;
 
     // ---- Scoring-buffer fields for the player car (not in telemetry): position,
     // lap/sector times, track %, session flag, field size. Times are doubles in
@@ -379,10 +423,21 @@ pub fn parse_rf2(telem: &[u8], scoring: &[u8]) -> Option<Telemetry> {
                 t.s2_ms = ((s2c - s1) * 1000.0).round() as i32;
             }
             // track %: vehicle mLapDist@104 / track length (scoringInfo.mLapDist@100).
+            // The SCORING buffer updates slower than the high-rate TELEMETRY buffer
+            // the current-lap time comes from, so the raw position lags the clock and
+            // the lap delta (time-at-position vs a reference) comes out noisy/wrong.
+            // Extrapolate the position forward by speed × (telemetry clock − scoring
+            // clock) so position and time refer to the SAME instant — the way a
+            // consistent delta needs them. (mCurrentET@80 and mElapsedTime@base+12 are
+            // both session ET in seconds.)
             let lapdist = le::f64(scoring, sb + 104);
             let tracklen = le::f64(scoring, 100);
             if tracklen > 1.0 && lapdist >= 0.0 {
-                t.track_pct = ((lapdist / tracklen) * 1000.0).clamp(0.0, 1000.0) as i32;
+                let scoring_et = le::f64(scoring, 80); // scoringInfo.mCurrentET
+                let telem_et = le::f64(telem, base + 12); // mElapsedTime (fresh)
+                let lag = (telem_et - scoring_et).clamp(0.0, 1.0); // buffer desync, s
+                let pos = lapdist + (t.speed_kmh as f64 / 3.6) * lag;
+                t.track_pct = ((pos / tracklen) * 1000.0).clamp(0.0, 1000.0) as i32;
             }
             // flag: session phase (file 120) + yellow (121) + per-car mFlag (sb+504).
             let phase = scoring[120];

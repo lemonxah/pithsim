@@ -110,6 +110,17 @@ pub struct Telemetry {
     // (= 0..100.0%); ers_state 0 unavailable, 1 inactive, 2 propulsion, 3 regen.
     pub battery_pct: i32,
     pub ers_state: i32,
+    // Tyre carcass/core temp (0.1°C) — the stable temp HUDs show; tt_*_i/m/o stay
+    // the surface tread inner/mid/outer gradient.
+    pub tt_carc_fl: i32,
+    pub tt_carc_fr: i32,
+    pub tt_carc_rl: i32,
+    pub tt_carc_rr: i32,
+    // Tyre compound per corner: 0 = soft, 1 = medium, 2 = hard, 3 = wet (-1 = n/a).
+    pub comp_fl: i32,
+    pub comp_fr: i32,
+    pub comp_rl: i32,
+    pub comp_rr: i32,
 }
 
 impl Telemetry {

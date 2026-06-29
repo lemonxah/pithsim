@@ -127,6 +127,7 @@ impl GameDecoder for F1Decoder {
 }
 
 fn set_tyre(t: &mut Telemetry, fl: i32, fr: i32, rl: i32, rr: i32) {
+    let (fl, fr, rl, rr) = (fl * 10, fr * 10, rl * 10, rr * 10); // °C → 0.1°C
     t.tt_fl_i = fl;
     t.tt_fl_m = fl;
     t.tt_fl_o = fl;

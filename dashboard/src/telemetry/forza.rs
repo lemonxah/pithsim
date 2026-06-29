@@ -92,10 +92,10 @@ impl GameDecoder for ForzaDecoder {
             t.pos_z = f32le(b, 240 + d).round() as i32;
             // Tyre surface temps: one value per corner → fill all three zones so
             // whichever zone a widget binds to shows the reading.
-            let ttfl = f32le(b, 256 + d).round() as i32;
-            let ttfr = f32le(b, 260 + d).round() as i32;
-            let ttrl = f32le(b, 264 + d).round() as i32;
-            let ttrr = f32le(b, 268 + d).round() as i32;
+            let ttfl = (f32le(b, 256 + d) * 10.0).round() as i32;
+            let ttfr = (f32le(b, 260 + d) * 10.0).round() as i32;
+            let ttrl = (f32le(b, 264 + d) * 10.0).round() as i32;
+            let ttrr = (f32le(b, 268 + d) * 10.0).round() as i32;
             t.tt_fl_i = ttfl;
             t.tt_fl_m = ttfl;
             t.tt_fl_o = ttfl;

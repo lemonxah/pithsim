@@ -31,7 +31,7 @@ pub const CATALOG: &[(&str, &str, &str)] = &[
 
 pub const ZONE_KEYS: [&str; 5] = ["topStrip", "leftRail", "center", "rightRail", "bottom"];
 pub const ZONE_TITLES: [&str; 5] = ["TOP STRIP", "LEFT RAIL", "CENTER", "RIGHT RAIL", "BOTTOM"];
-pub const DEG: &str = "\u{00B0}";
+pub const DEG: &str = "\u{00B0}C"; // temperature unit shown on temp widgets
 
 pub fn zone_index(k: &str) -> usize {
     ZONE_KEYS.iter().position(|&z| z == k).unwrap_or(0)

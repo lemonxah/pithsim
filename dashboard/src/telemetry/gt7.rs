@@ -73,10 +73,10 @@ pub fn parse(b: &[u8]) -> Option<Telemetry> {
     t.boost_kpa = ((le::f32(b, 0x50) - 1.0) * 100.0).round() as i32; // 1.0 = 0 kPa
     // Tyre surface temps °C: FL/FR/RL/RR @ 0x60/0x64/0x68/0x6C → all three zones.
     let (fl, fr, rl, rr) = (
-        le::f32(b, 0x60).round() as i32,
-        le::f32(b, 0x64).round() as i32,
-        le::f32(b, 0x68).round() as i32,
-        le::f32(b, 0x6C).round() as i32,
+        (le::f32(b, 0x60) * 10.0).round() as i32,
+        (le::f32(b, 0x64) * 10.0).round() as i32,
+        (le::f32(b, 0x68) * 10.0).round() as i32,
+        (le::f32(b, 0x6C) * 10.0).round() as i32,
     );
     t.tt_fl_i = fl; t.tt_fl_m = fl; t.tt_fl_o = fl;
     t.tt_fr_i = fr; t.tt_fr_m = fr; t.tt_fr_o = fr;
