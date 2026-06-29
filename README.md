@@ -119,6 +119,15 @@ Bottom line: **shared-memory titles (ACC / AC / EVO / rF2-LMU / RaceRoom)** can 
 near-full coverage via the in-prefix `pith-shm-bridge` tools; **UDP-only titles**
 (Forza, F1, GT7, DiRT, LFS/BeamNG) are capped at whatever the game broadcasts.
 
+### Relatives / standings
+
+The only *multi-car* data — a list of other cars with positions and time gaps —
+doesn't fit the single-car `$`-frame, so it rides its own `@REL` line. The host
+(`pith_core::relatives`) builds it from a sim's all-cars buffer (rF2/LMU scoring
+today; ACC broadcasting next), the shim/dashboard forward it, and the device's
+**Relatives** (cars nearest you on track, signed gaps) / **Standings** (race order,
+gap to leader) widget renders it. Place either from the race-editor palette.
+
 ## Releases
 
 Independent release streams from this one repo, via tag prefixes:

@@ -17,12 +17,14 @@ pub const RF2_TELEMETRY: &[&str] = &["$rFactor2SMMP_Telemetry$", "Local\\$rFacto
 pub const RF2_SCORING: &[&str] = &["$rFactor2SMMP_Scoring$", "Local\\$rFactor2SMMP_Scoring$"];
 pub const RF2_EXTENDED: &[&str] = &["$rFactor2SMMP_Extended$", "Local\\$rFactor2SMMP_Extended$"];
 
-/// What the shim sends each tick: the `$`-frame plus optional identity.
+/// What the shim sends each tick: the `$`-frame plus optional identity and an
+/// optional `@REL` relatives/standings line.
 pub struct ShimRead {
     pub frame: String,
     pub label: &'static str,
     pub car: Option<String>,
     pub track: Option<String>,
+    pub relatives: Option<String>,
 }
 
 /// Read whichever sim is currently exposing shared memory and return a ready-to-
@@ -37,7 +39,8 @@ pub fn read_frame() -> Option<ShimRead> {
                 shm::apply_rf2_extended(&mut tel, &ext); // TC/ABS levels
             }
             let (car, track) = shm::rf2_identity(&t, &s);
-            return Some(ShimRead { frame: tel.to_frame(), label: "rF2/LMU", car, track });
+            let relatives = pith_core::relatives::parse_rf2_relatives(&s).map(|r| r.to_wire());
+            return Some(ShimRead { frame: tel.to_frame(), label: "rF2/LMU", car, track, relatives });
         }
     }
     // AC / ACC / AC EVO: physics + graphics (+ static for identity).
@@ -58,13 +61,13 @@ pub fn read_frame() -> Option<ShimRead> {
                 } else {
                     (None, None)
                 };
-                return Some(ShimRead { frame: tel.to_frame(), label, car, track });
+                return Some(ShimRead { frame: tel.to_frame(), label, car, track, relatives: None });
             }
         }
     }
     if let Some(b) = win::read_any(R3E) {
         if let Some(tel) = shm::parse_r3e(&b) {
-            return Some(ShimRead { frame: tel.to_frame(), label: "RaceRoom", car: None, track: None });
+            return Some(ShimRead { frame: tel.to_frame(), label: "RaceRoom", car: None, track: None, relatives: None });
         }
     }
     None

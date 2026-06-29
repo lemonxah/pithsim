@@ -12,9 +12,9 @@ pub const PALETTE_TOKENS: [&str; 8] =
     ["white", "dim", "green", "amber", "red", "cyan", "blue", "purple"];
 
 /// Authoring kind options (the race-screen module palette).
-pub const KIND_OPTIONS: [&str; 13] = [
+pub const KIND_OPTIONS: [&str; 14] = [
     "stat", "bar", "gear", "gearSpeed", "rpmStrip", "tyreGrid", "tcDual", "sectors", "lapPair",
-    "map", "flag", "position", "button",
+    "map", "flag", "position", "relatives", "button",
 ];
 
 pub fn fmt_from_str(s: &str) -> Fmt {

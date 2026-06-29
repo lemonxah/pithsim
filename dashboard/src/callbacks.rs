@@ -674,6 +674,11 @@ pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
                     m.w = 96;
                     m.h = 56;
                 }
+                // A relatives/standings table needs room for several rows.
+                if m.kind == "relatives" {
+                    m.w = 200;
+                    m.h = 150;
+                }
                 // Cascade new nodes so they don't stack exactly on top of each other —
                 // overlapping boxes can't be selected or dragged individually.
                 let n = st

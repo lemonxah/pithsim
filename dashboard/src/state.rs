@@ -274,6 +274,10 @@ pub struct State {
     // Dashboard-side derived core fields (best/current lap, fuel/lap, delta) for
     // sources that don't transmit them.
     pub derived: crate::telemetry::derive::Derived,
+
+    // Latest multi-car relatives/standings (from a sim's @REL line) — forwarded to
+    // the device and mirrored in the preview.
+    pub relatives: pith_ui::Relatives,
 }
 
 impl Default for State {
@@ -367,6 +371,7 @@ impl Default for State {
             gt7_host: String::new(),
             shm_enabled: true,
             derived: Default::default(),
+            relatives: Default::default(),
         }
     }
 }

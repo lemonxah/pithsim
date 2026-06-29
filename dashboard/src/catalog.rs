@@ -22,6 +22,8 @@ pub const CATALOG: &[(&str, &str, &str)] = &[
     ("speed", "Speed only", "Speed value"),
     ("gear", "Gear only", "Gear glyph"),
     ("rpmValue", "RPM Value", "Numeric rpm"),
+    ("relatives", "Relatives", "Cars near you on track + gaps"),
+    ("standings", "Standings", "Race order + gap to leader"),
     ("button", "Button", "HID button (push / toggle)"),
 ];
 
@@ -120,6 +122,18 @@ pub fn default_spec(ty: &str) -> ModSpec {
                 ColorRule { op: "==".into(), v: 5, color: "white".into() },
                 ColorRule { op: "==".into(), v: 6, color: "red".into() },
             ];
+        }
+        // Relatives/standings: reuse `toggle` for the view mode (off = relative,
+        // on = standings) and `hid` for the visible row count.
+        "relatives" => {
+            m.kind = "relatives".into();
+            m.toggle = false;
+            m.hid = 6;
+        }
+        "standings" => {
+            m.kind = "relatives".into();
+            m.toggle = true;
+            m.hid = 6;
         }
         "button" => {
             m.kind = "button".into();

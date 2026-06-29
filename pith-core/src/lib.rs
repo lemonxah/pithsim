@@ -7,6 +7,7 @@
 
 pub mod format;
 pub mod le;
+pub mod relatives;
 pub mod shift;
 pub mod shm;
 pub mod simhub;

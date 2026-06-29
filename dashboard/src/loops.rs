@@ -96,12 +96,30 @@ fn handle_text_frame(
     if line.is_empty() {
         return;
     }
-    if let Some(model) = line.strip_prefix("@CM") {
+    if line.starts_with("@REL") {
+        apply_relatives(ctx, line);
+    } else if let Some(model) = line.strip_prefix("@CM") {
         apply_car_model(ctx, model.trim());
     } else if let Some(track) = line.strip_prefix("@MAP") {
         apply_track(ctx, track.trim());
     } else if line.starts_with('$') {
         push_sim_frame(ctx, line, last_push, last_preview);
+    }
+}
+
+/// Store a multi-car relatives/standings list (for the preview) and forward the
+/// raw `@REL` line to the device. The editor preview picks up `s.relatives` on its
+/// next telemetry tick.
+fn apply_relatives(ctx: &Arc<Ctx>, line: &str) {
+    if let Some(rel) = pith_ui::Relatives::from_wire(line) {
+        ctx.lock().relatives = rel;
+    }
+    if ctx.ota_active.load(Ordering::SeqCst) {
+        return;
+    }
+    let mut d = ctx.dash();
+    if d.connected() {
+        d.push_relatives(line);
     }
 }
 

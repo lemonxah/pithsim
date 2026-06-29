@@ -598,6 +598,7 @@ fn display_task() {
         // The active car profile drives the on-screen RPM strip the same way it drives
         // the hardware LEDs, so the two match (count, centering, colours, thresholds).
         let car = crate::led::current_car();
+        let relatives = state::with(|s| s.relatives.clone());
 
         // A screen from the active UiDoc is selected by display index (0 = race
         // panel, 1 = side panel). Absent -> fall back to the legacy renderers.
@@ -617,9 +618,9 @@ fn display_task() {
                 local_doc.as_ref().and_then(|d| d.screens.iter().find(|s| s.display == 1))
             {
                 if scr.tabs.is_empty() {
-                    pith_ui::render_screen_dirty(scr, &t, now, active_side, &car, &mut side_cache, fb, &mut dirty_rects);
+                    pith_ui::render_screen_dirty(scr, &t, now, active_side, &car, &relatives, &mut side_cache, fb, &mut dirty_rects);
                 } else {
-                    pith_ui::render_tabbed_dirty(scr, side_tab, &t, now, active_side, &car, &mut side_cache, fb, &mut dirty_rects);
+                    pith_ui::render_tabbed_dirty(scr, side_tab, &t, now, active_side, &car, &relatives, &mut side_cache, fb, &mut dirty_rects);
                 }
             } else {
                 // No second screen uploaded yet — prompt to add one in the editor.
@@ -672,9 +673,9 @@ fn display_task() {
                             .and_then(|d| d.screens.iter().find(|s| s.display == 0));
                         if let Some(scr) = race_scr {
                             if scr.tabs.is_empty() {
-                                pith_ui::render_screen_dirty(scr, &t, now, active_race, &car, &mut race_cache, fb, &mut dirty_rects);
+                                pith_ui::render_screen_dirty(scr, &t, now, active_race, &car, &relatives, &mut race_cache, fb, &mut dirty_rects);
                             } else {
-                                pith_ui::render_tabbed_dirty(scr, race_tab, &t, now, active_race, &car, &mut race_cache, fb, &mut dirty_rects);
+                                pith_ui::render_tabbed_dirty(scr, race_tab, &t, now, active_race, &car, &relatives, &mut race_cache, fb, &mut dirty_rects);
                             }
                         } else {
                             let layout = ui::parse_race(&race_json).unwrap_or_default();

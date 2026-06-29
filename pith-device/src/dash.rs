@@ -90,6 +90,14 @@ impl Dash {
         }
         self.tx_str(&format!("{frame}\n"));
     }
+    /// Push a multi-car relatives/standings line (`@REL…`). Fire-and-forget like
+    /// [`Self::push_telemetry`] — the device updates its relatives state, no reply.
+    pub fn push_relatives(&mut self, line: &str) {
+        if line.is_empty() {
+            return;
+        }
+        self.tx_str(&format!("{line}\n"));
+    }
     pub fn capabilities(&mut self) -> String {
         self.drain_t();
         self.tx_str("@CAP\n");

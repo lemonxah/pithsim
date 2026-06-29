@@ -41,6 +41,12 @@ fn main() {
                 }
             }
             let _ = sock.send_to(r.frame.as_bytes(), (host.as_str(), port));
+            // ~5 Hz: relatives/standings (positions + gaps change slowly vs the frame).
+            if ticks % 10 == 0 {
+                if let Some(rel) = &r.relatives {
+                    let _ = sock.send_to(rel.as_bytes(), (host.as_str(), port));
+                }
+            }
             if r.label != last_label {
                 last_label = r.label;
                 println!("pith-shim: streaming {}", r.label);

@@ -31,6 +31,7 @@ use u8g2_fonts::{
 use pith_core::format::{self, Fmt, RuleOp};
 pub use pith_core::format::{Fmt as ValueFmt, Pal, RuleOp as Op};
 use pith_core::registry::{field_def, field_value};
+pub use pith_core::relatives::Relatives;
 use pith_core::shift::{segment_rgb, RevCfg};
 pub use pith_core::shift::CarData;
 use pith_core::simhub::Telemetry;
@@ -185,6 +186,18 @@ pub enum Kind {
     /// is how built-in and custom widgets are expressed (label vs value position,
     /// row/column arrangement, …) without new Rust per widget.
     Widget(alloc::boxed::Box<El>),
+    /// Multi-car relatives / standings table. Rows come from the side-channel
+    /// [`Relatives`] (the `@REL` line), NOT the single-car telemetry frame —
+    /// it's the only non-single-car widget. `mode`: 0 = relative (cars nearest
+    /// on track, signed gap to you), 1 = standings (by position, gap to leader).
+    /// `rows` caps visible rows (0 = 6). Appended last so postcard indices of the
+    /// existing variants are unchanged.
+    Relatives {
+        #[serde(default)]
+        mode: u8,
+        #[serde(default)]
+        rows: u8,
+    },
 }
 
 /// One child of a `Row`/`Col`, with a flex weight (share of the main axis).
@@ -426,7 +439,7 @@ fn contrast(bg: Rgb565) -> Rgb565 {
 
 /// `active` is a bitmask of HID buttons (bit = hid-1) currently pressed/toggled-on,
 /// so a button can light up while you're touching it. 0 = nothing active.
-fn draw_kind<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, kind: &Kind, t: &Telemetry, now_ms: i64, active: u32, car: &CarData) {
+fn draw_kind<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, kind: &Kind, t: &Telemetry, now_ms: i64, active: u32, car: &CarData, rel: &Relatives) {
     let (x, y, w, h) = (r.x, r.y, r.w as i32, r.h as i32);
     let cx = x + w / 2;
     match kind {
@@ -615,9 +628,70 @@ fn draw_kind<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, kind: &Kind, t:
             // label only (no value), in a colour that contrasts the fill
             text(d, label, cx, y + h / 2, 14, contrast(bg), HorizontalAlignment::Center, VerticalPosition::Center);
         }
-        Kind::Widget(el) => layout_draw(d, r, el, t, now_ms, car),
+        Kind::Widget(el) => layout_draw(d, r, el, t, now_ms, car, rel),
+        Kind::Relatives { mode, rows } => draw_relatives(d, r, *mode, *rows, rel),
     }
     let _ = active;
+}
+
+/// Draw the multi-car relatives/standings table. `mode` 0 = relative (cars nearest
+/// the player on track, signed track gap), 1 = standings (by position, gap to
+/// leader). The host already selected the cars; the widget sorts + windows them.
+fn draw_relatives<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, mode: u8, rows: u8, rel: &Relatives) {
+    let (x, y, w, h) = (r.x, r.y, r.w as i32, r.h as i32);
+    let cx = x + w / 2;
+    let entries = rel.entries();
+    if entries.is_empty() {
+        text(d, "no cars", cx, y + h / 2, 12, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+        return;
+    }
+    let want = if rows == 0 { 6 } else { rows as usize };
+
+    // Order: standings by position; relative by track gap (ahead at top).
+    let mut idx: Vec<usize> = (0..entries.len()).collect();
+    if mode == 1 {
+        idx.sort_by_key(|&i| entries[i].place);
+        idx.truncate(want);
+    } else {
+        idx.sort_by(|&a, &b| entries[b].gap_rel_ms.cmp(&entries[a].gap_rel_ms));
+        let pp = idx.iter().position(|&i| entries[i].is_player()).unwrap_or(0);
+        let half = want / 2;
+        let start = pp.saturating_sub(half).min(idx.len().saturating_sub(want.min(idx.len())));
+        let end = (start + want).min(idx.len());
+        idx = idx[start..end].to_vec();
+    }
+
+    let n = idx.len().max(1) as i32;
+    let row_h = (h / n).max(1);
+    let tsz = (row_h - 4).clamp(9, 16) as u32;
+    for (row, &i) in idx.iter().enumerate() {
+        let c = &entries[i];
+        let ry = y + row as i32 * row_h;
+        let player = c.is_player();
+        if player {
+            fill_round(d, x + 1, ry + 1, w - 2, row_h - 2, 3, pal(Pal::Panel));
+        }
+        let fg = if c.in_pits() { pal(Pal::Dim) } else { pal(Pal::White) };
+        let label = alloc::format!("P{} {}", c.place, c.name_str());
+        text(d, &label, x + 4, ry + row_h / 2, tsz, fg, HorizontalAlignment::Left, VerticalPosition::Center);
+        let (gap, signed) = if mode == 1 { (c.gap_leader_ms, false) } else { (c.gap_rel_ms, true) };
+        let gs = if player && signed { alloc::string::String::from("--") } else { fmt_gap(gap, signed) };
+        let gcol = if signed {
+            if gap > 0 { pal(Pal::Red) } else if gap < 0 { pal(Pal::Green) } else { pal(Pal::Cyan) }
+        } else {
+            pal(Pal::Cyan)
+        };
+        text_mono(d, &gs, x + w - 4, ry + row_h / 2, tsz, gcol, HorizontalAlignment::Right, VerticalPosition::Center);
+    }
+}
+
+/// Format a gap in ms as `S.s` (relative gaps signed, standings gaps unsigned),
+/// integer-only so columns stay fixed-width under `text_mono`.
+fn fmt_gap(ms: i32, signed: bool) -> String {
+    let a = ms.unsigned_abs();
+    let (whole, tenths) = (a / 1000, (a % 1000) / 100);
+    let sign = if !signed || ms == 0 { "" } else if ms > 0 { "+" } else { "-" };
+    alloc::format!("{}{}.{}", sign, whole, tenths)
 }
 
 /// Inset a rect by `pad` on all sides (clamped to non-negative size).
@@ -633,13 +707,13 @@ fn inset(r: &Rect, pad: i32) -> Rect {
 /// Lay out + draw an element tree inside `r`. Row/Col split the main axis by flex
 /// weight; Stack overlays; Leaf draws via [`draw_kind`] (so every existing widget
 /// is reusable as a building block).
-fn layout_draw<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, el: &El, t: &Telemetry, now_ms: i64, car: &CarData) {
+fn layout_draw<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, el: &El, t: &Telemetry, now_ms: i64, car: &CarData, rel: &Relatives) {
     match el {
-        El::Leaf(k) => draw_kind(d, r, k, t, now_ms, 0, car),
+        El::Leaf(k) => draw_kind(d, r, k, t, now_ms, 0, car, rel),
         El::Stack { pad, children } => {
             let inner = inset(r, *pad as i32);
             for c in children {
-                layout_draw(d, &inner, c, t, now_ms, car);
+                layout_draw(d, &inner, c, t, now_ms, car, rel);
             }
         }
         El::Tabs { titles, active, pages } => {
@@ -655,7 +729,7 @@ fn layout_draw<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, el: &El, t: &
             }
             if let Some(page) = pages.get(*active as usize) {
                 let body = Rect { x: r.x, y: r.y + strip_h, w: r.w, h: (r.h as i32 - strip_h).max(0) as u32 };
-                layout_draw(d, &body, page, t, now_ms, car);
+                layout_draw(d, &body, page, t, now_ms, car, rel);
             }
         }
         El::Row { gap, pad, children } => {
@@ -670,7 +744,7 @@ fn layout_draw<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, el: &El, t: &
             for s in children {
                 let cw = avail * s.flex.max(1) as i32 / total;
                 let cr = Rect { x: cx, y: inner.y, w: cw.max(0) as u32, h: inner.h };
-                layout_draw(d, &cr, &s.el, t, now_ms, car);
+                layout_draw(d, &cr, &s.el, t, now_ms, car, rel);
                 cx += cw + *gap as i32;
             }
         }
@@ -686,7 +760,7 @@ fn layout_draw<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, el: &El, t: &
             for s in children {
                 let ch = avail * s.flex.max(1) as i32 / total;
                 let cr = Rect { x: inner.x, y: cy, w: inner.w, h: ch.max(0) as u32 };
-                layout_draw(d, &cr, &s.el, t, now_ms, car);
+                layout_draw(d, &cr, &s.el, t, now_ms, car, rel);
                 cy += ch + *gap as i32;
             }
         }
@@ -728,6 +802,9 @@ fn node_sig(kind: &Kind, t: &Telemetry, now_ms: i64, active: u32) -> u64 {
         Kind::LapPair => h(&[t.cur_lap_ms as i64, t.best_lap_ms as i64]),
         Kind::Position { .. } => h(&[t.position as i64, t.field_size as i64]),
         Kind::Widget(el) => el_sig(el, t, now_ms),
+        // Relatives data rides a side channel node_sig can't see; repaint on a
+        // ~4 Hz tick so live gaps refresh without threading the list in here.
+        Kind::Relatives { mode, rows } => h(&[*mode as i64, *rows as i64, now_ms / 250]),
     }
 }
 
@@ -773,10 +850,10 @@ impl RenderCache {
 }
 
 /// Full repaint: clear to the screen background and draw every node.
-pub fn render_screen<D: DrawTarget<Color = Rgb565>>(s: &Screen, t: &Telemetry, now_ms: i64, active: u32, car: &CarData, d: &mut D) {
+pub fn render_screen<D: DrawTarget<Color = Rgb565>>(s: &Screen, t: &Telemetry, now_ms: i64, active: u32, car: &CarData, rel: &Relatives, d: &mut D) {
     let _ = d.clear(pal(s.bg));
     for node in &s.nodes {
-        draw_kind(d, &node.rect, &node.kind, t, now_ms, active, car);
+        draw_kind(d, &node.rect, &node.kind, t, now_ms, active, car, rel);
     }
 }
 
@@ -793,11 +870,12 @@ pub fn render_screen_diff<D: DrawTarget<Color = Rgb565>>(
     now_ms: i64,
     active: u32,
     car: &CarData,
+    rel: &Relatives,
     cache: &mut RenderCache,
     d: &mut D,
 ) -> Option<(i32, i32, i32, i32)> {
     let mut scratch = Vec::new();
-    render_screen_dirty(s, t, now_ms, active, car, cache, d, &mut scratch)
+    render_screen_dirty(s, t, now_ms, active, car, rel, cache, d, &mut scratch)
 }
 
 /// Like [`render_screen_diff`], but also fills `rects` with the bounding box of
@@ -812,6 +890,7 @@ pub fn render_screen_dirty<D: DrawTarget<Color = Rgb565>>(
     now_ms: i64,
     active: u32,
     car: &CarData,
+    rel: &Relatives,
     cache: &mut RenderCache,
     d: &mut D,
     rects: &mut Vec<(i32, i32, i32, i32)>,
@@ -832,7 +911,7 @@ pub fn render_screen_dirty<D: DrawTarget<Color = Rgb565>>(
                 // erase the node's rect with the screen background before repaint
                 fill_rect(d, r.x, r.y, r.w as i32, r.h as i32, pal(s.bg));
             }
-            draw_kind(d, r, &node.kind, t, now_ms, active, car);
+            draw_kind(d, r, &node.kind, t, now_ms, active, car, rel);
             cache.sigs[i] = sig;
             let (x0, y0) = (r.x, r.y);
             let (x1, y1) = (r.x + r.w as i32 - 1, r.y + r.h as i32 - 1);
@@ -878,6 +957,7 @@ pub fn render_tabbed<D: DrawTarget<Color = Rgb565>>(
     now_ms: i64,
     pressed: u32,
     car: &CarData,
+    rel: &Relatives,
     d: &mut D,
 ) {
     let _ = d.clear(pal(s.bg));
@@ -899,7 +979,7 @@ pub fn render_tabbed<D: DrawTarget<Color = Rgb565>>(
         );
     }
     for node in s.nodes.iter().filter(|n| n.page == active) {
-        draw_kind(d, &node.rect, &node.kind, t, now_ms, pressed, car);
+        draw_kind(d, &node.rect, &node.kind, t, now_ms, pressed, car, rel);
     }
 }
 
@@ -926,6 +1006,7 @@ pub fn render_tabbed_dirty<D: DrawTarget<Color = Rgb565>>(
     now_ms: i64,
     pressed: u32,
     car: &CarData,
+    rel: &Relatives,
     cache: &mut RenderCache,
     d: &mut D,
     rects: &mut Vec<(i32, i32, i32, i32)>,
@@ -941,7 +1022,7 @@ pub fn render_tabbed_dirty<D: DrawTarget<Color = Rgb565>>(
         cache.sigs.resize(page.len(), 0);
         cache.last_tab = active as i32;
         for (i, node) in page.iter().enumerate() {
-            draw_kind(d, &node.rect, &node.kind, t, now_ms, pressed, car);
+            draw_kind(d, &node.rect, &node.kind, t, now_ms, pressed, car, rel);
             cache.sigs[i] = node_sig(&node.kind, t, now_ms, pressed);
         }
         let whole = (0, 0, s.w as i32 - 1, s.h as i32 - 1);
@@ -954,7 +1035,7 @@ pub fn render_tabbed_dirty<D: DrawTarget<Color = Rgb565>>(
         if cache.sigs[i] != sig {
             let r = &node.rect;
             fill_rect(d, r.x, r.y, r.w as i32, r.h as i32, pal(s.bg));
-            draw_kind(d, r, &node.kind, t, now_ms, pressed, car);
+            draw_kind(d, r, &node.kind, t, now_ms, pressed, car, rel);
             cache.sigs[i] = sig;
             let rect = (r.x, r.y, r.x + r.w as i32 - 1, r.y + r.h as i32 - 1);
             rects.push(rect);
@@ -1101,7 +1182,7 @@ mod engine_tests {
         };
         let t = demo_telem();
         let mut fb = Framebuffer::new(120, 80);
-        render_screen(&screen, &t, 0, 0, &CarData::default(), &mut fb);
+        render_screen(&screen, &t, 0, 0, &CarData::default(), &Relatives::default(), &mut fb);
         // some non-background pixels were drawn
         let bg = pal(Pal::Bg);
         assert!(fb_any_non_bg(&fb, bg), "widget drew nothing");

@@ -62,6 +62,7 @@ pub struct AppState {
     pub button_pages: u8,
     pub brightness: u8,       // 0..100
     pub car_model: String,    // from @CM
+    pub relatives: pith_ui::Relatives, // from @REL (multi-car standings/relatives)
     pub frames_ok: u32,
     pub frames_bad: u32,
     pub sim_on: bool,
@@ -100,6 +101,7 @@ pub fn init() {
         button_pages: 0,
         brightness: 43, // ~DEFAULT_BRIGHT (110/255)
         car_model: String::new(),
+        relatives: pith_ui::Relatives::default(),
         frames_ok: 0,
         frames_bad: 0,
         sim_on: false,
@@ -314,6 +316,12 @@ impl AppState {
 
     pub fn set_car_model(&mut self, model: &str) {
         self.car_model = model.to_owned();
+    }
+
+    pub fn set_relatives(&mut self, line: &str) {
+        if let Some(r) = pith_ui::Relatives::from_wire(line) {
+            self.relatives = r;
+        }
     }
 
     /// Apply a partial @PINS push (only present keys override current), persist,

@@ -301,6 +301,12 @@ fn dispatch(t: Transport, line: &str) {
         reply(t, "OK\n");
         return;
     }
+    // Relatives/standings list. Fire-and-forget (no reply) like the $-frame, so it
+    // stays off the command-reply path. `set_relatives` parses the full @REL line.
+    if line.starts_with("@REL") {
+        crate::state::with(|s| s.set_relatives(line));
+        return;
+    }
     if let Some(rest) = line.strip_prefix("@C") {
         let ok = crate::led::apply_car_json(rest);
         if ok {

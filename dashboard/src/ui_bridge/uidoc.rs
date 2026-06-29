@@ -143,6 +143,14 @@ fn kind_of(m: &ModSpec, rev: u8, map: &[u16]) -> Kind {
     if m.kind == "map" {
         return Kind::Map { pts: map.to_vec() };
     }
+    // Relatives/standings: `toggle` = view mode (off relative, on standings),
+    // `hid` = visible row count (data arrives separately on the @REL line).
+    if m.kind == "relatives" {
+        return Kind::Relatives {
+            mode: m.toggle as u8,
+            rows: m.hid.clamp(0, pith_ui::Relatives::default().cars.len() as i32) as u8,
+        };
+    }
     let fmt = if m.fmt_type.is_empty() {
         None
     } else {
@@ -223,12 +231,12 @@ fn current_telemetry(s: &State) -> Telemetry {
 
 /// Render `screen` against live telemetry into a slint image, using the device's
 /// own pith-ui renderer + fonts (pixel-identical mirror).
-fn render_image(screen: &Screen, active_tab: u8, t: &Telemetry) -> slint::Image {
+fn render_image(screen: &Screen, active_tab: u8, t: &Telemetry, rel: &pith_ui::Relatives) -> slint::Image {
     let mut fb = pith_ui::Framebuffer::new(screen.w, screen.h);
     if screen.tabs.is_empty() {
-        pith_ui::render_screen(screen, t, 0, 0, &pith_ui::CarData::default(), &mut fb);
+        pith_ui::render_screen(screen, t, 0, 0, &pith_ui::CarData::default(), rel, &mut fb);
     } else {
-        pith_ui::render_tabbed(screen, active_tab, t, 0, 0, &pith_ui::CarData::default(), &mut fb);
+        pith_ui::render_tabbed(screen, active_tab, t, 0, 0, &pith_ui::CarData::default(), rel, &mut fb);
     }
     let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(screen.w, screen.h);
     buf.make_mut_bytes().copy_from_slice(&fb.to_rgba8());
@@ -241,7 +249,7 @@ fn render_image(screen: &Screen, active_tab: u8, t: &Telemetry) -> slint::Image 
 pub fn push_preview(ui: &AppWindow, s: &State) {
     let screen = build_screen(s, s.edit_display);
     let t = current_telemetry(s);
-    let img = render_image(&screen, s.edit_tab.clamp(0, 255) as u8, &t);
+    let img = render_image(&screen, s.edit_tab.clamp(0, 255) as u8, &t, &s.relatives);
     ui.global::<RaceLayout>().set_preview_image(img);
 }
 
