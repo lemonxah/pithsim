@@ -157,7 +157,12 @@ aur-publish:
             continue
         fi
         cp "$src/PKGBUILD" "$src/.SRCINFO" "$dst/"
-        ( cd "$dst" && git add PKGBUILD .SRCINFO && git commit -m "$pkg ${ver}" && git push )
+        ( cd "$dst"
+          git add PKGBUILD .SRCINFO
+          # commit only if something changed (re-run safe), then push to AUR's
+          # required 'master' branch regardless of the local branch name.
+          git diff --cached --quiet || git commit -m "$pkg ${ver}"
+          git push origin HEAD:master )
         echo "  $pkg ${ver} pushed to AUR"
     done
     echo "Done. Commit the updated aur/ PKGBUILDs (+ .SRCINFO) to the monorepo too."
