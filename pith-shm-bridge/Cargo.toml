@@ -21,6 +21,7 @@ license = "BSD-3-Clause"
 [dependencies]
 # Reuse the dashboard's verified struct parsers + $-frame serializer.
 pith-core = { path = "../pith-core" }
+pith-sim = { path = "../pith-sim" }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Memory"] }

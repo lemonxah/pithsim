@@ -34,7 +34,7 @@ pub struct ShimRead {
 /// send `$`-frame + identity. `None` if nothing is running.
 #[cfg(windows)]
 pub fn read_frame() -> Option<ShimRead> {
-    use pith_core::shm;
+    use pith_sim::shm;
     // rF2 / LMU needs both buffers (to match the player car + read names).
     if let (Some(t), Some(s)) = (win::read_any(RF2_TELEMETRY), win::read_any(RF2_SCORING)) {
         if let Some(mut tel) = shm::parse_rf2(&t, &s) {
@@ -94,4 +94,5 @@ pub const COPY_BLOCKS: &[(&[&str], &str)] = &[
     (RF2_TELEMETRY, "Z:\\dev\\shm\\$rFactor2SMMP_Telemetry$"),
     (RF2_SCORING, "Z:\\dev\\shm\\$rFactor2SMMP_Scoring$"),
     (RF2_EXTENDED, "Z:\\dev\\shm\\$rFactor2SMMP_Extended$"),
+    (LMU_DATA, "Z:\\dev\\shm\\LMU_Data"),
 ];

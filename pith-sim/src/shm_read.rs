@@ -8,7 +8,7 @@
 //! giving full physics (incl. RPM → shift-lights) with no SimHub and no plugin.
 //! See `SHARED_MEMORY.md`.
 //!
-//! The struct parsers live in `pith_core::shm` (shared with the in-prefix tools);
+//! The struct parsers live in `pith_sim::shm` (shared with the in-prefix tools);
 //! this module only does the Linux `/dev/shm` discovery + reading.
 
 use pith_core::simhub::Telemetry;
@@ -38,12 +38,16 @@ pub fn read_once() -> Option<ShmRead> {
 
     // rF2 / LMU: telemetry + scoring (scoring also carries car/track names).
     if let (Some(tb), Some(sb)) = (read("rFactor2SMMP_Telemetry"), read("rFactor2SMMP_Scoring")) {
-        if let Some(mut t) = pith_core::shm::parse_rf2(&tb, &sb) {
-            // Extended buffer (if the bridge mirrors it) carries the TC/ABS levels.
+        if let Some(mut t) = crate::shm::parse_rf2(&tb, &sb) {
+            // Extended buffer (if the bridge mirrors it) carries the static TC/ABS.
             if let Some(eb) = read("rFactor2SMMP_Extended") {
-                pith_core::shm::apply_rf2_extended(&mut t, &eb);
+                crate::shm::apply_rf2_extended(&mut t, &eb);
             }
-            let (car, track) = pith_core::shm::rf2_identity(&tb, &sb);
+            // LMU native map (if the bridge mirrors it) → LIVE TC/ABS + game delta.
+            if let Some(lb) = read("LMU_Data") {
+                crate::shm::apply_lmu_native(&mut t, &lb);
+            }
+            let (car, track) = crate::shm::rf2_identity(&tb, &sb);
             return Some(ShmRead { telem: t, label: "rF2 / LMU (shm)", car, track });
         }
     }
@@ -53,14 +57,14 @@ pub fn read_once() -> Option<ShmRead> {
         ("acpmf_physics", "acpmf_graphics", "acpmf_static", "AC/ACC (shm)"),
     ] {
         if let Some(pb) = read(phys) {
-            if let Some(mut t) = pith_core::shm::parse_ac_physics(&pb) {
+            if let Some(mut t) = crate::shm::parse_ac_physics(&pb) {
                 if let Some(gb) = read(graph) {
-                    pith_core::shm::apply_acc_graphics(&mut t, &gb);
+                    crate::shm::apply_acc_graphics(&mut t, &gb);
                 }
                 // Static-page identity is AC/ACC only (EVO's layout differs).
                 let (car, track) = if label == "AC/ACC (shm)" {
                     read(stat)
-                        .map(|sb| pith_core::shm::ac_static_identity(&sb))
+                        .map(|sb| crate::shm::ac_static_identity(&sb))
                         .unwrap_or((None, None))
                 } else {
                     (None, None)
@@ -71,7 +75,7 @@ pub fn read_once() -> Option<ShmRead> {
     }
     // RaceRoom (single buffer; identity is numeric only).
     if let Some(b) = read("R3E") {
-        if let Some(t) = pith_core::shm::parse_r3e(&b) {
+        if let Some(t) = crate::shm::parse_r3e(&b) {
             return Some(ShmRead { telem: t, label: "RaceRoom (shm)", car: None, track: None });
         }
     }

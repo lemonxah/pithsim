@@ -7,7 +7,7 @@ use crate::ctx::Ctx;
 use crate::games::detect_game;
 use crate::net::cardata::{auto_apply_car_model, prefetch_game_data};
 use crate::persist::{race_layout_from_json, save_race_layout};
-use crate::telemetry::decoders::try_decode;
+use pith_sim::decoders::try_decode;
 use crate::telemetry::frame_from_telem;
 use crate::ui_bridge::cars::{push_car_results, push_classes, rebuild_filtered};
 use crate::ui_bridge::firmware::{recompute_update_available, refresh_serial_ports};
@@ -657,7 +657,7 @@ pub fn read_race_from_device(ctx: &Arc<Ctx>) {
 // These reach out to a game (rather than passively listening on the shared UDP
 // port) and feed the same `$`-frame path as everything else.
 
-use crate::telemetry::acc;
+use pith_sim::acc;
 
 /// Set the Telemetry-UDP page's "source" label (throttled by the caller).
 fn set_udp_source(ctx: &Arc<Ctx>, _src: &str) {
@@ -825,7 +825,7 @@ fn set_ac_status(ctx: &Arc<Ctx>, status: &'static str) {
 /// handshakes on :9996, subscribes, then streams `RTCarInfo` → device. Has RPM,
 /// so shift-lights work (off the device's configured redline).
 pub fn ac_connector_loop(ctx: Arc<Ctx>) {
-    use crate::telemetry::ac;
+    use pith_sim::ac;
     use std::net::UdpSocket;
     let mut last_push = Instant::now();
     let mut last_preview = Instant::now();
@@ -918,7 +918,7 @@ fn set_gt7_status(ctx: &Arc<Ctx>, status: &'static str) {
 /// to the PlayStation IP on :33739, receives Salsa20-encrypted packets on :33740,
 /// decrypts + parses → device. Has RPM + rev-limiter, so shift-lights work.
 pub fn gt7_connector_loop(ctx: Arc<Ctx>) {
-    use crate::telemetry::gt7;
+    use pith_sim::gt7;
     use std::net::UdpSocket;
     let mut last_push = Instant::now();
     let mut last_preview = Instant::now();
@@ -999,7 +999,7 @@ fn set_shm_status(ctx: &Arc<Ctx>, status: &'static str) {
 /// → device. This is how ACC gets RPM/shift-lights natively, no SimHub/plugin.
 #[cfg(target_os = "linux")]
 pub fn shm_reader_loop(ctx: Arc<Ctx>) {
-    use crate::telemetry::shm;
+    use pith_sim::shm_read as shm;
     let mut last_push = Instant::now();
     let mut last_preview = Instant::now();
     let mut last_src = Instant::now() - Duration::from_secs(2);

@@ -16,6 +16,8 @@ path = "src/main.rs"
 # registry (single source of truth); pith-ui = runtime UI engine (`std` gives the
 # framebuffer target for the in-app preview).
 pith-core = { path = "../pith-core" }
+# pith-sim = reusable telemetry sources (UDP decoders, connector protocols, shm parsers).
+pith-sim = { path = "../pith-sim" }
 pith-ui = { path = "../pith-ui", features = ["std"] }
 # Shared device transport (HID + serial + OTA) — also used by the pith-flash CLI.
 pith-device = { path = "../pith-device" }

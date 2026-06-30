@@ -1,0 +1,9 @@
+[package]
+name = "pith-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Reusable sim-racing telemetry sources: UDP game decoders, connector protocols, and shared-memory parsers — all producing a normalized pith_core Telemetry."
+
+[dependencies]
+pith-core = { path = "../pith-core" }
+salsa20 = "0.10"

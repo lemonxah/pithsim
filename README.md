@@ -12,6 +12,9 @@ pithddu/
 │               → binary `pithddu`. Its own esp toolchain + Xtensa target.
 ├─ pith-core/   Shared, host-testable pure logic: telemetry parse, wire formatting,
 │               field registry (codegen from firmware/main/field_registry.json). no_std.
+├─ pith-sim/    Reusable telemetry sources: UDP game decoders (Forza/F1/AMS2/OutGauge),
+│               connector protocols (ACC/AC/GT7), shared-memory parsers (rF2-LMU/AC/R3E)
+│               + the /dev/shm reader. Bytes → a normalized pith-core Telemetry.
 └─ pith-ui/     Shared runtime-interpreted UI engine: a UiDoc (postcard blob) is loaded
                 and rendered at runtime via embedded-graphics — no recompile to change
                 screens. Renders identically on the device panels and in the desktop

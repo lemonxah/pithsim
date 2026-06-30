@@ -7,8 +7,8 @@
 //! (`r3e.h`), rFactor 2 / LMU `rF2Telemetry`/`rF2Scoring` (`rF2State.h`,
 //! `#pragma pack(4)`).
 
-use crate::le;
-use crate::simhub::Telemetry;
+use pith_core::le;
+use pith_core::simhub::Telemetry;
 
 /// AC / ACC / AC EVO `SPageFilePhysics` (4-byte naturally-aligned fields). The
 /// head (`gas@4 brake@8 fuel@12 gear@16 rpms@20 speedKmh@28`) and the fields up

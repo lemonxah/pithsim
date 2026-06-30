@@ -3857,6 +3857,7 @@ dependencies = [
  "libc",
  "pith-core",
  "pith-device",
+ "pith-sim",
  "pith-ui",
  "reqwest",
  "salsa20",
@@ -3881,6 +3882,14 @@ name = "pith-flash"
 version = "0.1.0"
 dependencies = [
  "pith-device",
+]
+
+[[package]]
+name = "pith-sim"
+version = "0.1.0"
+dependencies = [
+ "pith-core",
+ "salsa20",
 ]
 
 [[package]]

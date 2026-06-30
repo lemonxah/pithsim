@@ -1,18 +1,12 @@
-pub mod ac;
-pub mod acc;
-pub mod codemasters;
-pub mod decoders;
+//! Dashboard-local telemetry glue. The game decoders, connector protocols and
+//! shared-memory parsers now live in the reusable `pith-sim` crate; what's left
+//! here is app-specific: derived fields, the `$`-frame serializer, formatting
+//! helpers, the field-id registry, and the `/dev/shm` reader.
 pub mod derive;
-pub mod f1;
 pub mod field_registry;
 pub mod format;
-pub mod forza;
-pub mod gt7;
 pub mod le;
-pub mod outgauge;
-pub mod pcars;
 pub mod serialize;
-pub mod shm;
 
 pub use field_registry::*;
 pub use format::*;

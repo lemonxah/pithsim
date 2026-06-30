@@ -80,6 +80,8 @@ const fn telem_zero() -> Telemetry {
         headlights: 0, wipers: 0, pit_limiter: 0, ignition: 0, flag: 0, track_pct: 0, pos_x: 0, pos_z: 0,
         s1_ms: 0, s2_ms: 0, s3_ms: 0, bs1_ms: 0, bs2_ms: 0, bs3_ms: 0,
         battery_pct: 0, ers_state: 0,
+        tt_carc_fl: 0, tt_carc_fr: 0, tt_carc_rl: 0, tt_carc_rr: 0,
+        comp_fl: 0, comp_fr: 0, comp_rl: 0, comp_rr: 0,
     }
 }
 
