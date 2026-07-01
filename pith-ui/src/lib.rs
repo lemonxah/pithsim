@@ -1190,18 +1190,33 @@ pub struct RenderCache {
     sigs: Vec<u64>,
     last_tab: i32, // active tab last painted (tabbed screens) — switch forces a full repaint
     cells: Vec<Vec<u64>>, // per-node Painter cell-signature cache (multi-value widgets)
+    next_ms: Vec<i64>, // per-node earliest time it may be reconsidered (throttled kinds only)
 }
 
 impl RenderCache {
     pub fn new() -> Self {
-        Self { sigs: Vec::new(), last_tab: -1, cells: Vec::new() }
+        Self { sigs: Vec::new(), last_tab: -1, cells: Vec::new(), next_ms: Vec::new() }
     }
     /// Force a full repaint on the next [`render_screen_diff`] (e.g. after a layout
     /// swap or display wake).
     pub fn invalidate(&mut self) {
         self.sigs.clear();
         self.cells.clear();
+        self.next_ms.clear();
         self.last_tab = -1;
+    }
+}
+
+/// Minimum time between dirty-checks for widgets that don't need to track live
+/// telemetry every frame. Decouples them from the "race screen" gauges (RPM,
+/// gear, shift lights, ...) which always check every frame — a busy map or
+/// standings redraw should never eat into their SPI/blit budget. 0 = no
+/// throttle (current every-frame behaviour).
+fn throttle_ms(kind: &Kind) -> i64 {
+    match kind {
+        Kind::Map { .. } => 200,       // car dot creeping around a lap outline
+        Kind::Relatives { .. } => 400, // standings/gaps don't need to be that live
+        _ => 0,
     }
 }
 
@@ -1259,9 +1274,20 @@ pub fn render_screen_dirty<D: DrawTarget<Color = Rgb565>>(
         cache.sigs.resize(s.nodes.len(), 0);
         cache.cells.clear();
         cache.cells.resize(s.nodes.len(), Vec::new());
+        cache.next_ms.clear();
+        cache.next_ms.resize(s.nodes.len(), 0);
     }
     let mut dirty: Option<(i32, i32, i32, i32)> = None;
     for (i, node) in s.nodes.iter().enumerate() {
+        // Throttled kinds (Map, Relatives) get checked on their own slower cadence —
+        // skip entirely until due, so they never compete with the live gauges.
+        let thr = throttle_ms(&node.kind);
+        if thr > 0 && !full && now_ms < cache.next_ms[i] {
+            continue;
+        }
+        if thr > 0 {
+            cache.next_ms[i] = now_ms + thr;
+        }
         // Multi-value widgets (TyrePanel, Relatives) self-manage per-cell dirty via
         // the Painter, so one changing value doesn't reblit the whole widget.
         if let Some(d2opt) = paint_node(d, node, t, rel, &mut cache.cells[i], rects, full, pal(s.bg), s.w as i32, s.h as i32) {
@@ -1399,8 +1425,14 @@ pub fn render_tabbed_dirty<D: DrawTarget<Color = Rgb565>>(
         cache.sigs.resize(page.len(), 0);
         cache.cells.clear();
         cache.cells.resize(page.len(), Vec::new());
+        cache.next_ms.clear();
+        cache.next_ms.resize(page.len(), 0);
         cache.last_tab = active as i32;
         for (i, node) in page.iter().enumerate() {
+            let thr = throttle_ms(&node.kind);
+            if thr > 0 {
+                cache.next_ms[i] = now_ms + thr;
+            }
             if paint_node(d, node, t, rel, &mut cache.cells[i], rects, true, pal(s.bg), s.w as i32, s.h as i32).is_none() {
                 draw_kind(d, &node.rect, &node.kind, t, now_ms, pressed, car, rel);
             }
@@ -1412,6 +1444,15 @@ pub fn render_tabbed_dirty<D: DrawTarget<Color = Rgb565>>(
     }
     let mut dirty: Option<(i32, i32, i32, i32)> = None;
     for (i, node) in page.iter().enumerate() {
+        // Throttled kinds (Map, Relatives) get checked on their own slower cadence —
+        // skip entirely until due, so they never compete with the live gauges.
+        let thr = throttle_ms(&node.kind);
+        if thr > 0 && now_ms < cache.next_ms[i] {
+            continue;
+        }
+        if thr > 0 {
+            cache.next_ms[i] = now_ms + thr;
+        }
         if let Some(d2opt) = paint_node(d, node, t, rel, &mut cache.cells[i], rects, false, pal(s.bg), s.w as i32, s.h as i32) {
             if let Some(d2) = d2opt {
                 dirty = Some(match dirty {

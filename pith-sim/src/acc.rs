@@ -109,7 +109,7 @@ pub fn parse(b: &[u8]) -> Option<AccMsg> {
             let car_index = c.u16()? as i32;
             c.skip(2)?; // driverIndex
             c.skip(1)?; // driverCount
-            let gear = c.u8()? as i32 - 2; // bias: R = -1, N = 0
+            let gear = c.u8()? as i32 - 1; // raw: 0=R,1=N,2=1st… → bias R=-1, N=0
             let world_x = c.f32()?;
             let world_y = c.f32()?;
             c.skip(4)?; // yaw f32
@@ -224,7 +224,7 @@ mod tests {
         b.extend_from_slice(&7u16.to_le_bytes()); // carIndex
         b.extend_from_slice(&0u16.to_le_bytes()); // driverIndex
         b.push(1); // driverCount
-        b.push(5); // gear byte → 5-2 = 3
+        b.push(5); // gear byte → 5-1 = 4
         b.extend_from_slice(&10.0f32.to_le_bytes()); // worldX
         b.extend_from_slice(&20.0f32.to_le_bytes()); // worldY
         b.extend_from_slice(&0.0f32.to_le_bytes()); // yaw
@@ -242,7 +242,7 @@ mod tests {
         match parse(&b).unwrap() {
             AccMsg::Car(u) => {
                 assert_eq!(u.car_index, 7);
-                assert_eq!(u.gear, 3);
+                assert_eq!(u.gear, 4);
                 assert_eq!(u.kmh, 210);
                 assert_eq!(u.position, 3);
                 assert_eq!(u.laps, 4);

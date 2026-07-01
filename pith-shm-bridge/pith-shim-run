@@ -19,13 +19,29 @@
 # Steam Tinker Launch uses under the hood.
 #
 # --- config (all overridable via env in the Launch Options) -------------------
-# Find the .exe files: user install (`just shm-tools install` → XDG data dir) or
-# the system AUR package (/usr/share/pithddu). Override with PITH_DIR or PITH_SHIM.
+# The .exe files always get INJECTED from the XDG data dir (~/.local/share/pithddu
+# by default) — never from a system path. Override with PITH_DIR or PITH_SHIM.
+#
+# Steam's pressure-vessel sandbox only reliably exposes $HOME to the injected
+# process — a system path like /usr/share/pithddu (AUR) is visible fine to this
+# script (a normal shell sees it), but can silently fail to LOAD inside the
+# game's actual sandboxed session ("wine: failed to open ...: c0000135") even
+# though the identical file runs perfectly outside the sandbox. So on every run,
+# if a system-packaged copy exists and is newer than (or missing from) the XDG
+# mirror, sync it in first — then always inject from the mirror.
+_pith_home_dir="${XDG_DATA_HOME:-$HOME/.local/share}/pithddu"
 if [ -z "${PITH_DIR:-}" ]; then
-    for _d in "${XDG_DATA_HOME:-$HOME/.local/share}/pithddu" /usr/share/pithddu /usr/lib/pithddu; do
-        [ -f "$_d/pith-shim.exe" ] && { PITH_DIR="$_d"; break; }
+    for _d in /usr/share/pithddu /usr/lib/pithddu; do
+        [ -f "$_d/pith-shim.exe" ] || continue
+        mkdir -p "$_pith_home_dir"
+        for _f in pith-shim.exe pith-shmbridge.exe; do
+            [ -f "$_d/$_f" ] || continue
+            { [ ! -f "$_pith_home_dir/$_f" ] || [ "$_d/$_f" -nt "$_pith_home_dir/$_f" ]; } \
+                && cp -f "$_d/$_f" "$_pith_home_dir/$_f"
+        done
+        break
     done
-    : "${PITH_DIR:=${XDG_DATA_HOME:-$HOME/.local/share}/pithddu}"
+    PITH_DIR="$_pith_home_dir"
 fi
 PITH_SHIM="${PITH_SHIM:-$PITH_DIR/pith-shim.exe}"          # exe to inject
 PITH_BRIDGE_EXE="${PITH_BRIDGE_EXE:-$PITH_DIR/pith-shmbridge.exe}"
