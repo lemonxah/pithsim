@@ -4,7 +4,7 @@ pkgver=0.7.11
 pkgrel=1
 pkgdesc="SimHub companion app for the Pith DDU sim-racing dash (prebuilt binary)"
 arch=('x86_64')
-url="https://github.com/lemonxah/pithddu"
+url="https://github.com/lemonxah/pithsim"
 license=('BSD-3-Clause')
 # The Slint renderer is statically linked into the binary; only the winit/GL +
 # HID/serial (libudev) runtime libs are needed.
