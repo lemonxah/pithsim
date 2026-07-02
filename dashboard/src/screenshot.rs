@@ -37,8 +37,7 @@ pub fn run(ui: &AppWindow, rt: &tokio::runtime::Runtime, dir: &str) {
     app.set_connected(true); // drop the "no device" gate so the body is visible
     app.set_conn_detail("Connected · demo".into());
     app.set_page(PAGES[0].0);
-    ui.window()
-        .set_size(slint::PhysicalSize::new(1320, 860));
+    ui.window().set_size(slint::PhysicalSize::new(1320, 860));
 
     let out = dir.to_string();
     if let Err(e) = std::fs::create_dir_all(&out) {
@@ -79,10 +78,16 @@ pub fn run(ui: &AppWindow, rt: &tokio::runtime::Runtime, dir: &str) {
             match ui.window().take_snapshot() {
                 Ok(buf) => {
                     let path = format!("{out}/{name}.png");
-                    if let Err(e) = save_png(Path::new(&path), buf.width(), buf.height(), buf.as_bytes()) {
+                    if let Err(e) =
+                        save_png(Path::new(&path), buf.width(), buf.height(), buf.as_bytes())
+                    {
                         eprintln!("screenshots: write {path} failed: {e}");
                     } else {
-                        println!("screenshots: wrote {path} ({}×{})", buf.width(), buf.height());
+                        println!(
+                            "screenshots: wrote {path} ({}×{})",
+                            buf.width(),
+                            buf.height()
+                        );
                     }
                 }
                 Err(e) => eprintln!("screenshots: snapshot {name} failed: {e}"),

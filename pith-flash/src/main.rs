@@ -132,7 +132,10 @@ fn main() -> ExitCode {
         );
         ExitCode::SUCCESS
     } else {
-        eprintln!("✗ Flash failed. Full device log:\n----\n{}\n----", dash.log.trim_end());
+        eprintln!(
+            "✗ Flash failed. Full device log:\n----\n{}\n----",
+            dash.log.trim_end()
+        );
         ExitCode::FAILURE
     }
 }
@@ -142,7 +145,9 @@ fn print_usage() {
     eprintln!("USAGE:");
     eprintln!("    pith-flash <firmware.bin> [--port <serial>]\n");
     eprintln!("OPTIONS:");
-    eprintln!("    -p, --port <dev>   Flash over a serial port instead of USB HID (e.g. /dev/ttyACM0)");
+    eprintln!(
+        "    -p, --port <dev>   Flash over a serial port instead of USB HID (e.g. /dev/ttyACM0)"
+    );
     eprintln!("    -l, --list         List serial ports and exit");
     eprintln!("    -h, --help         Show this help\n");
     eprintln!("The device must already be running OTA-capable firmware (it reflashes itself).");

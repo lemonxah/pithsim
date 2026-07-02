@@ -135,8 +135,8 @@ impl GameDecoder for ForzaDecoder {
             };
             t.steer = (b[308 + d] as i8) as i32 * 100 / 127; // -100..100
             t.boost_kpa = (f32le(b, 272 + d) * 6.895).round() as i32; // psi → kPa
-            // Fuel is a 0..1 tank fraction with no capacity channel → can't map to
-            // the device's decilitre field, so it's left unset for now.
+                                                                      // Fuel is a 0..1 tank fraction with no capacity channel → can't map to
+                                                                      // the device's decilitre field, so it's left unset for now.
         }
 
         Some(Decoded { telem: t, car })
@@ -150,9 +150,12 @@ mod tests {
     // Build a Horizon (324-byte, +12) packet with a few known fields set.
     fn horizon_packet() -> Vec<u8> {
         let mut b = vec![0u8; 324];
-        let put_f32 = |b: &mut [u8], o: usize, v: f32| b[o..o + 4].copy_from_slice(&v.to_le_bytes());
-        let put_s32 = |b: &mut [u8], o: usize, v: i32| b[o..o + 4].copy_from_slice(&v.to_le_bytes());
-        let put_u16 = |b: &mut [u8], o: usize, v: u16| b[o..o + 2].copy_from_slice(&v.to_le_bytes());
+        let put_f32 =
+            |b: &mut [u8], o: usize, v: f32| b[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        let put_s32 =
+            |b: &mut [u8], o: usize, v: i32| b[o..o + 4].copy_from_slice(&v.to_le_bytes());
+        let put_u16 =
+            |b: &mut [u8], o: usize, v: u16| b[o..o + 2].copy_from_slice(&v.to_le_bytes());
         put_s32(&mut b, 0, 1); // IsRaceOn
         put_f32(&mut b, 8, 7500.0); // EngineMaxRpm
         put_f32(&mut b, 16, 6800.0); // CurrentEngineRpm

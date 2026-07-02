@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 
 use slint::ComponentHandle;
 
-use pith_hb_core::proto;
 use pith_device::{device_present, Handbrake, Serial, PID_HANDBRAKE, PITH_VID};
+use pith_hb_core::proto;
 
 use crate::ctx::Ctx;
 use crate::firmware::semver_cmp;
@@ -202,7 +202,13 @@ fn flash_hb_latest(ctx: &Arc<Ctx>) {
         // The app lives in the single `factory` partition at 0x10000 (no OTA
         // slots) — writing the app image there is the whole update.
         let status = tokio::process::Command::new("espflash")
-            .args(["write-bin", "0x10000", &out.to_string_lossy(), "--port", &port])
+            .args([
+                "write-bin",
+                "0x10000",
+                &out.to_string_lossy(),
+                "--port",
+                &port,
+            ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

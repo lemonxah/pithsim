@@ -14,8 +14,8 @@ fn main() {
 fn gen_field_registry() {
     let json_path = Path::new("../firmware/ddu/main/field_registry.json");
     println!("cargo:rerun-if-changed={}", json_path.display());
-    let raw = std::fs::read_to_string(json_path)
-        .expect("read ../firmware/ddu/main/field_registry.json");
+    let raw =
+        std::fs::read_to_string(json_path).expect("read ../firmware/ddu/main/field_registry.json");
     let parsed: serde_json::Value = serde_json::from_str(&raw).expect("parse field_registry.json");
     let fields = parsed["fields"].as_array().expect("fields array");
 

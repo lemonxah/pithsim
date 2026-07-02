@@ -34,7 +34,14 @@ pub fn f32(b: &[u8], o: usize) -> f32 {
 #[inline]
 pub fn f64(b: &[u8], o: usize) -> f64 {
     f64::from_le_bytes([
-        b[o], b[o + 1], b[o + 2], b[o + 3], b[o + 4], b[o + 5], b[o + 6], b[o + 7],
+        b[o],
+        b[o + 1],
+        b[o + 2],
+        b[o + 3],
+        b[o + 4],
+        b[o + 5],
+        b[o + 6],
+        b[o + 7],
     ])
 }
 

@@ -24,7 +24,11 @@ fn pick_bin(s: &crate::state::State, rel: &FwRelease) -> Option<(String, bool)> 
     }
     let chip = s.cur_board().target.clone();
     rel.board_bin.iter().find_map(|(bid, u)| {
-        let bin_chip = s.boards.iter().find(|b| &b.id == bid).map(|b| b.target.as_str());
+        let bin_chip = s
+            .boards
+            .iter()
+            .find(|b| &b.id == bid)
+            .map(|b| b.target.as_str());
         (bin_chip == Some(chip.as_str())).then(|| (u.clone(), false))
     })
 }
@@ -142,17 +146,37 @@ pub fn flash_selected_release(ctx: &Arc<Ctx>) {
         let s = ctx.lock();
         let valid = i >= 0 && (i as usize) < s.releases.len();
         if !valid {
-            (String::new(), String::new(), String::new(), false, false, true, String::new())
+            (
+                String::new(),
+                String::new(),
+                String::new(),
+                false,
+                false,
+                true,
+                String::new(),
+            )
         } else {
             let board = s.cur_board_id();
             let chip = s.cur_board().target.clone();
             match pick_bin(&s, &s.releases[i as usize]) {
-                Some((url, exact)) => {
-                    (s.releases[i as usize].tag.clone(), url, board, true, true, exact, chip)
-                }
-                None => {
-                    (s.releases[i as usize].tag.clone(), String::new(), board, true, false, true, chip)
-                }
+                Some((url, exact)) => (
+                    s.releases[i as usize].tag.clone(),
+                    url,
+                    board,
+                    true,
+                    true,
+                    exact,
+                    chip,
+                ),
+                None => (
+                    s.releases[i as usize].tag.clone(),
+                    String::new(),
+                    board,
+                    true,
+                    false,
+                    true,
+                    chip,
+                ),
             }
         }
     };

@@ -107,17 +107,25 @@ pub fn parse(b: &[u8]) -> Option<Telemetry> {
     t.water_c = le::f32(b, 0x58).round() as i32;
     t.oil_c = le::f32(b, 0x5C).round() as i32;
     t.boost_kpa = ((le::f32(b, 0x50) - 1.0) * 100.0).round() as i32; // 1.0 = 0 kPa
-    // Tyre surface temps °C: FL/FR/RL/RR @ 0x60/0x64/0x68/0x6C → all three zones.
+                                                                     // Tyre surface temps °C: FL/FR/RL/RR @ 0x60/0x64/0x68/0x6C → all three zones.
     let (fl, fr, rl, rr) = (
         (le::f32(b, 0x60) * 10.0).round() as i32,
         (le::f32(b, 0x64) * 10.0).round() as i32,
         (le::f32(b, 0x68) * 10.0).round() as i32,
         (le::f32(b, 0x6C) * 10.0).round() as i32,
     );
-    t.tt_fl_i = fl; t.tt_fl_m = fl; t.tt_fl_o = fl;
-    t.tt_fr_i = fr; t.tt_fr_m = fr; t.tt_fr_o = fr;
-    t.tt_rl_i = rl; t.tt_rl_m = rl; t.tt_rl_o = rl;
-    t.tt_rr_i = rr; t.tt_rr_m = rr; t.tt_rr_o = rr;
+    t.tt_fl_i = fl;
+    t.tt_fl_m = fl;
+    t.tt_fl_o = fl;
+    t.tt_fr_i = fr;
+    t.tt_fr_m = fr;
+    t.tt_fr_o = fr;
+    t.tt_rl_i = rl;
+    t.tt_rl_m = rl;
+    t.tt_rl_o = rl;
+    t.tt_rr_i = rr;
+    t.tt_rr_m = rr;
+    t.tt_rr_o = rr;
     // Flags bitfield @0x8E: CarOnTrack=1, Lights=128, TCSActive=2048.
     let flags = le::u16(b, 0x8E);
     t.ignition = (flags & 0x0001 != 0) as i32;
@@ -152,8 +160,8 @@ mod tests {
         p[0x8A..0x8C].copy_from_slice(&8000i16.to_le_bytes()); // max alert rpm
         p[0x90] = 0x04; // gear 4
         p[0x91] = 255; // throttle
-        // Choose an iv1, encrypt with the matching nonce, then write iv1 @0x40
-        // into the ciphertext (the game writes the seed in the clear region).
+                       // Choose an iv1, encrypt with the matching nonce, then write iv1 @0x40
+                       // into the ciphertext (the game writes the seed in the clear region).
         let iv1: u32 = 0x1234_5678;
         let iv2 = iv1 ^ 0xDEAD_BEAF;
         let mut nonce = [0u8; 8];

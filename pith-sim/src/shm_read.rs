@@ -35,7 +35,12 @@ pub fn read_once() -> Option<ShmRead> {
             .collect(),
         Err(_) => return None,
     };
-    let find = |needle: &str| entries.iter().find(|(n, _)| n.contains(needle)).map(|(_, p)| p);
+    let find = |needle: &str| {
+        entries
+            .iter()
+            .find(|(n, _)| n.contains(needle))
+            .map(|(_, p)| p)
+    };
     let read = |needle: &str| find(needle).and_then(|p| std::fs::read(p).ok());
 
     // rF2 / LMU: telemetry + scoring (scoring also carries car/track names).
@@ -52,13 +57,29 @@ pub fn read_once() -> Option<ShmRead> {
             }
             let (car, track) = crate::shm::rf2_identity(&tb, &sb);
             let debug = Some(crate::shm::rf2_lmu_debug(&tb, &sb, lb.as_deref()));
-            return Some(ShmRead { telem: t, label: "rF2 / LMU (shm)", car, track, debug });
+            return Some(ShmRead {
+                telem: t,
+                label: "rF2 / LMU (shm)",
+                car,
+                track,
+                debug,
+            });
         }
     }
     // AC / ACC / AC EVO: physics + graphics (+ static for identity).
     for (phys, graph, stat, label) in [
-        ("acevo_pmf_physics", "acevo_pmf_graphics", "acevo_pmf_static", "AC EVO (shm)"),
-        ("acpmf_physics", "acpmf_graphics", "acpmf_static", "AC/ACC (shm)"),
+        (
+            "acevo_pmf_physics",
+            "acevo_pmf_graphics",
+            "acevo_pmf_static",
+            "AC EVO (shm)",
+        ),
+        (
+            "acpmf_physics",
+            "acpmf_graphics",
+            "acpmf_static",
+            "AC/ACC (shm)",
+        ),
     ] {
         let evo = label == "AC EVO (shm)";
         if let Some(pb) = read(phys) {
@@ -82,14 +103,26 @@ pub fn read_once() -> Option<ShmRead> {
                         .map(|sb| crate::shm::ac_static_identity(&sb))
                         .unwrap_or((None, None))
                 };
-                return Some(ShmRead { telem: t, label, car, track, debug: None });
+                return Some(ShmRead {
+                    telem: t,
+                    label,
+                    car,
+                    track,
+                    debug: None,
+                });
             }
         }
     }
     // RaceRoom (single buffer; identity is numeric only).
     if let Some(b) = read("R3E") {
         if let Some(t) = crate::shm::parse_r3e(&b) {
-            return Some(ShmRead { telem: t, label: "RaceRoom (shm)", car: None, track: None, debug: None });
+            return Some(ShmRead {
+                telem: t,
+                label: "RaceRoom (shm)",
+                car: None,
+                track: None,
+                debug: None,
+            });
         }
     }
     None

@@ -11,13 +11,13 @@
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Fmt {
-    Int = 0,  // integer, value/scale
-    Fixed1,   // 1 decimal,  value/scale
-    Fixed2,   // 2 decimals, value/scale
-    Time,     // lap time  m:ss.mmm (value = ms)
-    Sector,   // sector    s.mmm    (value = ms)
-    Delta,    // signed seconds, 4 decimals (value = 0.1 ms units)
-    Str,      // plain integer (no scaling), for counts/codes ("string")
+    Int = 0, // integer, value/scale
+    Fixed1,  // 1 decimal,  value/scale
+    Fixed2,  // 2 decimals, value/scale
+    Time,    // lap time  m:ss.mmm (value = ms)
+    Sector,  // sector    s.mmm    (value = ms)
+    Delta,   // signed seconds, 4 decimals (value = 0.1 ms units)
+    Str,     // plain integer (no scaling), for counts/codes ("string")
 }
 
 /// Color-rule comparison ops. Order matches the C `rule_op_t` enum and `OP_NAMES`.
@@ -50,8 +50,9 @@ pub enum Pal {
     Rgb(u8, u8, u8),
 }
 
-pub const FMT_NAMES: [&str; 7] =
-    ["int", "fixed1", "fixed2", "time", "sector", "delta", "string"];
+pub const FMT_NAMES: [&str; 7] = [
+    "int", "fixed1", "fixed2", "time", "sector", "delta", "string",
+];
 pub const OP_NAMES: [&str; 5] = ["<", "<=", "==", ">=", ">"];
 pub const PAL_NAMES: [&str; 10] = [
     "bg", "panel", "white", "dim", "green", "amber", "red", "cyan", "blue", "purple",
@@ -126,7 +127,9 @@ impl Pal {
             "purple" => Pal::Purple,
             "white" => Pal::White,
             // "#rrggbb" -> a custom colour; anything else -> White.
-            _ => parse_hex(s).map(|(r, g, b)| Pal::Rgb(r, g, b)).unwrap_or(Pal::White),
+            _ => parse_hex(s)
+                .map(|(r, g, b)| Pal::Rgb(r, g, b))
+                .unwrap_or(Pal::White),
         }
     }
     /// Lowercase token for the named colours; "custom" for an Rgb (use [`Pal::to_token`]

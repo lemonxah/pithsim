@@ -24,8 +24,8 @@ pub struct ModSpec {
     pub label: String,
     pub fmt_type: String,
     pub unit: String,
-    pub base: String,     // for a button: OFF-state colour
-    pub on_base: String,  // for a toggle button: ON-state colour
+    pub base: String,    // for a button: OFF-state colour
+    pub on_base: String, // for a toggle button: ON-state colour
     pub scale: i32,
     pub size_pct: i32,
     pub rules: Vec<ColorRule>,
@@ -63,8 +63,8 @@ pub struct ElemSpec {
     pub scale: i32,
     pub base: String,
     pub size: i32,
-    pub align: i32,  // 0 left, 1 center, 2 right
-    pub valign: i32, // 0 top, 1 center, 2 bottom
+    pub align: i32,     // 0 left, 1 center, 2 right
+    pub valign: i32,    // 0 top, 1 center, 2 bottom
     pub action: String, // legacy button semantic name (kept for back-compat)
     pub rules: Vec<ColorRule>,
     // Button elements: HID joystick button (1..=32, 0 = none) + latch/momentary.
@@ -164,7 +164,6 @@ pub struct CarItem {
     pub led_cols: Vec<u32>,
 }
 
-
 #[derive(Clone, Default)]
 pub struct FwRelease {
     pub tag: String,
@@ -209,7 +208,7 @@ pub struct State {
     pub edit_display: u8,    // which display the freeform editor is showing (0/1)
     pub tabs: [Vec<String>; 2], // per-display tab page names (empty = display not tabbed)
     pub edit_tab: i32,       // tab page currently shown in the editor
-    pub map_track: String,   // track whose bundled outline the Map widget shows (manual or auto-detected)
+    pub map_track: String, // track whose bundled outline the Map widget shows (manual or auto-detected)
     pub last_sim_frame: Option<std::time::Instant>, // when the plugin last fed us (gates the @T round-trip)
     // Latest frame per telemetry source (label, parsed, when, which computed fields
     // it supplies). Multiple live sources are MERGED (augment, not replace) so e.g.
@@ -222,7 +221,7 @@ pub struct State {
         crate::telemetry::derive::Provided,
     )>,
     pub custom_swatches: Vec<String>, // saved colour-picker swatches ("#rrggbb")
-    pub sel_elem: i32,       // selected element index within the selected widget (-1 = none)
+    pub sel_elem: i32, // selected element index within the selected widget (-1 = none)
     pub drag_origin: Option<(String, i32, i32, i32, i32)>, // (id,x,y,w,h) at gesture start
     pub presets: Vec<Preset>,
     pub active_preset: i32,
@@ -252,11 +251,11 @@ pub struct State {
     pub led_tc: i32,
     pub led_abs: i32,
     pub led_rgbw: i32,
-    pub disp_rot: i32,     // 0..3 = 0/90/180/270°
+    pub disp_rot: i32, // 0..3 = 0/90/180/270°
     pub disp_flip_h: bool,
     pub disp_flip_v: bool,
-    pub disp_bgr: bool,    // panel colour order BGR (vs RGB)
-    pub disp_inv: bool,    // invert colours
+    pub disp_bgr: bool, // panel colour order BGR (vs RGB)
+    pub disp_inv: bool, // invert colours
     pub boards: Vec<BoardDef>,
     pub board: i32,
 
@@ -264,7 +263,6 @@ pub struct State {
     pub hb_fw: String, // handbrake firmware version (from its @CAP), for update checks
     pub serial_ports: Vec<crate::device::PortInfo>,
     pub releases: Vec<FwRelease>,
-
 
     pub device_log: Vec<String>, // firmware logs streamed over HID report id 3
 
@@ -279,7 +277,7 @@ pub struct State {
     pub ac_host: String,
     pub ac_port: u16,
     pub gt7_enabled: bool,
-    pub gt7_host: String, // PlayStation IP (GT7 streams from the console)
+    pub gt7_host: String,  // PlayStation IP (GT7 streams from the console)
     pub shm_enabled: bool, // read AC/ACC shared memory from /dev/shm (needs a bridge)
 
     // Dashboard-side derived core fields (best/current lap, fuel/lap, delta) for

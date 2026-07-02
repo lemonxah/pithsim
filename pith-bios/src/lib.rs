@@ -49,7 +49,12 @@ fn menu_def(i: usize) -> ((i32, i32, i32, i32), &'static str, Pal, Action) {
         0 => (BOOT, "Boot firmware", Pal::Green, Action::Boot),
         1 => (RESET, "Reset config", Pal::Amber, Action::ResetConfig),
         2 => (MOUNT, "Mount as USB drive", Pal::Cyan, Action::MountUsb),
-        3 => (DOWNLOAD, "USB flash mode (download)", Pal::Red, Action::Download),
+        3 => (
+            DOWNLOAD,
+            "USB flash mode (download)",
+            Pal::Red,
+            Action::Download,
+        ),
         _ => (REBOOT, "Reboot", Pal::White, Action::Reboot),
     }
 }
@@ -92,7 +97,16 @@ pub fn draw_menu_button<D: DrawTarget<Color = Rgb565>>(d: &mut D, i: usize, pres
         (pal(Pal::Panel), pal(accent))
     };
     fill_round(d, r.0, r.1, r.2, r.3, 8, bg);
-    text(d, label, r.0 + r.2 / 2, r.1 + r.3 / 2, 16, fg, HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        label,
+        r.0 + r.2 / 2,
+        r.1 + r.3 / 2,
+        16,
+        fg,
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
 }
 
 /// Countdown line region on the splash — so the caller blits only this each second
@@ -100,16 +114,57 @@ pub fn draw_menu_button<D: DrawTarget<Color = Rgb565>>(d: &mut D, i: usize, pres
 pub const SPLASH_CD_RECT: (i32, i32, i32, i32) = (20, 190, 440, 72);
 
 /// Splash chrome: everything EXCEPT the changing countdown line. Draw once.
-pub fn render_splash_chrome<D: DrawTarget<Color = Rgb565>>(d: &mut D, version: &str, slot: &str, prev_fails: u8) {
+pub fn render_splash_chrome<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    version: &str,
+    slot: &str,
+    prev_fails: u8,
+) {
     let _ = d.clear(pal(Pal::Bg));
-    text(d, "PITH DDU", W / 2, 84, 40, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        "PITH DDU",
+        W / 2,
+        84,
+        40,
+        pal(Pal::White),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
     let v = alloc::format!("recovery  -  v{version}  ({slot})");
-    text(d, &v, W / 2, 128, 14, pal(Pal::Cyan), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        &v,
+        W / 2,
+        128,
+        14,
+        pal(Pal::Cyan),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
     if prev_fails > 0 {
         let m = alloc::format!("previous boot failed {prev_fails}x");
-        text(d, &m, W / 2, 160, 12, pal(Pal::Amber), HorizontalAlignment::Center, VerticalPosition::Center);
+        text(
+            d,
+            &m,
+            W / 2,
+            160,
+            12,
+            pal(Pal::Amber),
+            HorizontalAlignment::Center,
+            VerticalPosition::Center,
+        );
     }
-    text(d, "tap screen for recovery", W / 2, 250, 12, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        "tap screen for recovery",
+        W / 2,
+        250,
+        12,
+        pal(Pal::Dim),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
 }
 
 /// Just the countdown number line: erase + redraw within [`SPLASH_CD_RECT`].
@@ -118,38 +173,130 @@ pub fn render_splash_countdown<D: DrawTarget<Color = Rgb565>>(d: &mut D, secs_le
     fill_round(d, r.0, r.1, r.2, r.3, 0, pal(Pal::Bg)); // erase (radius 0 = plain rect)
     let unit = if secs_left == 1 { "second" } else { "seconds" };
     let c = alloc::format!("{secs_left} {unit} till boot");
-    text(d, &c, W / 2, 214, 24, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        &c,
+        W / 2,
+        214,
+        24,
+        pal(Pal::White),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
 }
 
 /// Combined splash (full redraw) — convenience for the firmware's in-app BIOS.
-pub fn render_splash<D: DrawTarget<Color = Rgb565>>(d: &mut D, version: &str, slot: &str, secs_left: i32, prev_fails: u8) {
+pub fn render_splash<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    version: &str,
+    slot: &str,
+    secs_left: i32,
+    prev_fails: u8,
+) {
     render_splash_chrome(d, version, slot, prev_fails);
     render_splash_countdown(d, secs_left);
 }
 
 /// The recovery menu (full draw). Touch-driven — dispatch taps via [`action_at`];
 /// for press feedback redraw a single button with [`draw_menu_button`].
-pub fn render_menu<D: DrawTarget<Color = Rgb565>>(d: &mut D, version: &str, slot: &str, prev_fails: u8) {
+pub fn render_menu<D: DrawTarget<Color = Rgb565>>(
+    d: &mut D,
+    version: &str,
+    slot: &str,
+    prev_fails: u8,
+) {
     let _ = d.clear(pal(Pal::Bg));
-    text(d, "RECOVERY", W / 2, 28, 18, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        "RECOVERY",
+        W / 2,
+        28,
+        18,
+        pal(Pal::White),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
     let v = alloc::format!("v{version}   ({slot})");
-    text(d, &v, W / 2, 54, 12, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        &v,
+        W / 2,
+        54,
+        12,
+        pal(Pal::Dim),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
     if prev_fails > 0 {
         let m = alloc::format!("boot failed {prev_fails}x  -  pick a recovery option");
-        text(d, &m, W / 2, 82, 12, pal(Pal::Amber), HorizontalAlignment::Center, VerticalPosition::Center);
+        text(
+            d,
+            &m,
+            W / 2,
+            82,
+            12,
+            pal(Pal::Amber),
+            HorizontalAlignment::Center,
+            VerticalPosition::Center,
+        );
     } else {
-        text(d, "setup / recovery", W / 2, 82, 12, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+        text(
+            d,
+            "setup / recovery",
+            W / 2,
+            82,
+            12,
+            pal(Pal::Dim),
+            HorizontalAlignment::Center,
+            VerticalPosition::Center,
+        );
     }
     for i in 0..menu_button_count() {
         draw_menu_button(d, i, false);
     }
-    text(d, "USB flash mode = flash from the PC, no BOOT/RESET buttons", W / 2, 310, 11, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        "USB flash mode = flash from the PC, no BOOT/RESET buttons",
+        W / 2,
+        310,
+        11,
+        pal(Pal::Dim),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
 }
 
 /// A simple centered two-line status / placeholder screen.
 pub fn render_message<D: DrawTarget<Color = Rgb565>>(d: &mut D, title: &str, line: &str) {
     let _ = d.clear(pal(Pal::Bg));
-    text(d, title, W / 2, H / 2 - 16, 24, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
-    text(d, line, W / 2, H / 2 + 20, 14, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
-    text(d, "tap to go back", W / 2, H - 24, 11, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(
+        d,
+        title,
+        W / 2,
+        H / 2 - 16,
+        24,
+        pal(Pal::White),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
+    text(
+        d,
+        line,
+        W / 2,
+        H / 2 + 20,
+        14,
+        pal(Pal::Dim),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
+    text(
+        d,
+        "tap to go back",
+        W / 2,
+        H - 24,
+        11,
+        pal(Pal::Dim),
+        HorizontalAlignment::Center,
+        VerticalPosition::Center,
+    );
 }

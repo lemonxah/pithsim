@@ -6,8 +6,7 @@ pub const APP_FW_VERSION: &str = "0.9.9";
 // tagged `firmware-v*`; one release carries every device's image, told apart
 // by asset name (`pithddu-<board>.bin` DDU, `pith-hb-<board>.bin` handbrake).
 pub const FIRMWARE_GIT_URL: &str = "https://github.com/lemonxah/pithsim.git";
-pub const FIRMWARE_RELEASES_URL: &str =
-    "https://api.github.com/repos/lemonxah/pithsim/releases";
+pub const FIRMWARE_RELEASES_URL: &str = "https://api.github.com/repos/lemonxah/pithsim/releases";
 
 pub fn semver_cmp(a: &str, b: &str) -> i32 {
     fn parse(s: &str) -> [i32; 4] {

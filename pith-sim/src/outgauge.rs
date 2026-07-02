@@ -32,20 +32,20 @@ impl GameDecoder for OutGaugeDecoder {
         let mut t = Telemetry::idle();
         t.speed_kmh = (speed * 3.6).round() as i32; // m/s → km/h
         t.rpm = rpm.round() as i32; // direct engine rpm (no redline in OutGauge)
-        // OutGauge gear: 0 = reverse, 1 = neutral, 2 = 1st … → numeric gear = raw-1.
+                                    // OutGauge gear: 0 = reverse, 1 = neutral, 2 = 1st … → numeric gear = raw-1.
         t.gear = le::gear_byte(gear_raw as i32 - 1);
         t.throttle = (le::f32(b, 48) * 100.0).round() as i32;
         t.brake = (le::f32(b, 52) * 100.0).round() as i32;
         t.clutch = (le::f32(b, 56) * 100.0).round() as i32;
         t.ignition = 1; // engine running while OutGauge streams
-        // Extra channels: turbo (bar→kPa), engine + oil temps.
+                        // Extra channels: turbo (bar→kPa), engine + oil temps.
         t.boost_kpa = (le::f32(b, 20) * 100.0).round() as i32; // turbo bar → kPa
         t.water_c = le::f32(b, 24).round() as i32; // EngTemp
         t.oil_c = le::f32(b, 36).round() as i32; // OilTemp
-        // ShowLights (DL_* bits) @44: FULLBEAM=2, PITSPEED=8, TC=16, ABS=1024.
-        // CAVEATS (InSim.txt): DL_TC/DL_ABS light when the aid is active OR
-        // switched off — not a pure live-intervention signal in LFS. BeamNG
-        // emits this struct too but never sets DL_PITSPEED.
+                                                 // ShowLights (DL_* bits) @44: FULLBEAM=2, PITSPEED=8, TC=16, ABS=1024.
+                                                 // CAVEATS (InSim.txt): DL_TC/DL_ABS light when the aid is active OR
+                                                 // switched off — not a pure live-intervention signal in LFS. BeamNG
+                                                 // emits this struct too but never sets DL_PITSPEED.
         let dl = le::u32(b, 44);
         t.headlights = (dl & 0x0002 != 0) as i32;
         t.pit_limiter = (dl & 0x0008 != 0) as i32;

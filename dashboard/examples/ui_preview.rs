@@ -34,7 +34,15 @@ fn render_screen_image(doc: &pith_ui::UiDoc) -> slint::Image {
     let mut fb = pith_ui::Framebuffer::new(s.w, s.h);
     // render against a demo telemetry frame (same engine + fonts the device runs)
     let t = pith_ui::demo_telem();
-    pith_ui::render_screen(s, &t, 0, 0, &pith_ui::CarData::default(), &pith_ui::Relatives::default(), &mut fb);
+    pith_ui::render_screen(
+        s,
+        &t,
+        0,
+        0,
+        &pith_ui::CarData::default(),
+        &pith_ui::Relatives::default(),
+        &mut fb,
+    );
     let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(s.w, s.h);
     buf.make_mut_bytes().copy_from_slice(&fb.to_rgba8());
     slint::Image::from_rgba8(buf)

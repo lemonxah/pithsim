@@ -72,9 +72,31 @@ fn elem_kind(e: &ElemSpec, rev: u8, map: &[u16]) -> Kind {
     let align = align_of(e.align);
     let valign = valign_of(e.valign);
     match e.kind.as_str() {
-        "label" => Kind::Label { text: e.text.clone(), color: base, size, align, valign },
-        "value" => Kind::Value { field, fmt, scale: e.scale, unit: e.unit.clone(), base, rules: elem_rules(e), size, align, valign },
-        "bar" => Kind::Bar { field, label: e.text.clone(), scale: e.scale, base, rules: elem_rules(e) },
+        "label" => Kind::Label {
+            text: e.text.clone(),
+            color: base,
+            size,
+            align,
+            valign,
+        },
+        "value" => Kind::Value {
+            field,
+            fmt,
+            scale: e.scale,
+            unit: e.unit.clone(),
+            base,
+            rules: elem_rules(e),
+            size,
+            align,
+            valign,
+        },
+        "bar" => Kind::Bar {
+            field,
+            label: e.text.clone(),
+            scale: e.scale,
+            base,
+            rules: elem_rules(e),
+        },
         "gear" => Kind::GearSpeed { speed: false },
         "gearSpeed" => Kind::GearSpeed { speed: true },
         "rpmStrip" => Kind::RpmStrip { count: rev },
@@ -82,11 +104,21 @@ fn elem_kind(e: &ElemSpec, rev: u8, map: &[u16]) -> Kind {
         "tcDual" => Kind::TcDual,
         "sectors" => Kind::Sectors,
         "lapPair" => Kind::LapPair,
-        "position" => Kind::Position { label: e.text.clone() },
-        "flag" => Kind::Flag { field, base, rules: elem_rules(e) },
+        "position" => Kind::Position {
+            label: e.text.clone(),
+        },
+        "flag" => Kind::Flag {
+            field,
+            base,
+            rules: elem_rules(e),
+        },
         "map" => Kind::Map { pts: map.to_vec() },
         "button" => Kind::Button {
-            label: if e.text.is_empty() { "BTN".into() } else { e.text.clone() },
+            label: if e.text.is_empty() {
+                "BTN".into()
+            } else {
+                e.text.clone()
+            },
             color: base,
             action: e.action.clone(),
             toggle: e.toggle,
@@ -95,7 +127,17 @@ fn elem_kind(e: &ElemSpec, rev: u8, map: &[u16]) -> Kind {
             rules: elem_rules(e),
             on_color: Pal::Green,
         },
-        _ => Kind::Value { field, fmt, scale: e.scale, unit: e.unit.clone(), base, rules: elem_rules(e), size, align, valign },
+        _ => Kind::Value {
+            field,
+            fmt,
+            scale: e.scale,
+            unit: e.unit.clone(),
+            base,
+            rules: elem_rules(e),
+            size,
+            align,
+            valign,
+        },
     }
 }
 
@@ -114,9 +156,17 @@ fn kind_of(m: &ModSpec, rev: u8, map: &[u16]) -> Kind {
             .collect();
         let gap = m.gap.clamp(0, 255) as u8;
         let root = if m.dir == 1 {
-            El::Row { gap, pad: 2, children }
+            El::Row {
+                gap,
+                pad: 2,
+                children,
+            }
         } else {
-            El::Col { gap, pad: 2, children }
+            El::Col {
+                gap,
+                pad: 2,
+                children,
+            }
         };
         return Kind::Widget(alloc_box(root));
     }
@@ -125,14 +175,22 @@ fn kind_of(m: &ModSpec, rev: u8, map: &[u16]) -> Kind {
     // Buttons carry toggle/hid that builtin() can't express, so build the Kind here.
     if m.kind == "button" {
         return Kind::Button {
-            label: if m.label.is_empty() { "BTN".into() } else { m.label.clone() },
+            label: if m.label.is_empty() {
+                "BTN".into()
+            } else {
+                m.label.clone()
+            },
             color: base, // OFF-state colour
             action: String::new(),
             toggle: m.toggle,
             hid: m.hid.clamp(0, 32) as u8,
             field,
             rules: rules_of(m),
-            on_color: Pal::from_str(if m.on_base.is_empty() { "green" } else { &m.on_base }),
+            on_color: Pal::from_str(if m.on_base.is_empty() {
+                "green"
+            } else {
+                &m.on_base
+            }),
         };
     }
     // RPM strip matches the physically installed rev-LED count.
@@ -148,7 +206,9 @@ fn kind_of(m: &ModSpec, rev: u8, map: &[u16]) -> Kind {
     if m.kind == "relatives" {
         return Kind::Relatives {
             mode: m.toggle as u8,
-            rows: m.hid.clamp(0, pith_ui::Relatives::default().cars.len() as i32) as u8,
+            rows: m
+                .hid
+                .clamp(0, pith_ui::Relatives::default().cars.len() as i32) as u8,
         };
     }
     let fmt = if m.fmt_type.is_empty() {
@@ -157,7 +217,17 @@ fn kind_of(m: &ModSpec, rev: u8, map: &[u16]) -> Kind {
         Some(Fmt::from_str(&m.fmt_type))
     };
     let size = m.size_pct.clamp(0, 255) as u8;
-    pith_ui::builtin(&m.kind, field, &m.label, fmt, m.scale, &m.unit, base, rules_of(m), size)
+    pith_ui::builtin(
+        &m.kind,
+        field,
+        &m.label,
+        fmt,
+        m.scale,
+        &m.unit,
+        base,
+        rules_of(m),
+        size,
+    )
 }
 
 fn alloc_box(el: El) -> Box<El> {
@@ -184,11 +254,7 @@ pub fn build_screen(s: &State, display: u8) -> Screen {
             page: m.page.clamp(0, 255) as u8,
         })
         .collect();
-    let tabs = s
-        .tabs
-        .get(display as usize)
-        .cloned()
-        .unwrap_or_default();
+    let tabs = s.tabs.get(display as usize).cloned().unwrap_or_default();
     Screen {
         display,
         w: SCREEN_W,
@@ -227,12 +293,26 @@ fn current_telemetry(s: &State) -> Telemetry {
 
 /// Render `screen` against live telemetry into a slint image, using the device's
 /// own pith-ui renderer + fonts (pixel-identical mirror).
-fn render_image(screen: &Screen, active_tab: u8, t: &Telemetry, rel: &pith_ui::Relatives) -> slint::Image {
+fn render_image(
+    screen: &Screen,
+    active_tab: u8,
+    t: &Telemetry,
+    rel: &pith_ui::Relatives,
+) -> slint::Image {
     let mut fb = pith_ui::Framebuffer::new(screen.w, screen.h);
     if screen.tabs.is_empty() {
         pith_ui::render_screen(screen, t, 0, 0, &pith_ui::CarData::default(), rel, &mut fb);
     } else {
-        pith_ui::render_tabbed(screen, active_tab, t, 0, 0, &pith_ui::CarData::default(), rel, &mut fb);
+        pith_ui::render_tabbed(
+            screen,
+            active_tab,
+            t,
+            0,
+            0,
+            &pith_ui::CarData::default(),
+            rel,
+            &mut fb,
+        );
     }
     let mut buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(screen.w, screen.h);
     buf.make_mut_bytes().copy_from_slice(&fb.to_rgba8());
@@ -259,8 +339,28 @@ mod tests {
     fn uidoc_json_roundtrips_for_firmware() {
         let mut s = State::default();
         s.nodes = vec![
-            ModSpec { id: "a".into(), kind: "gearSpeed".into(), x: 170, y: 120, w: 140, h: 80, display: 0, ..Default::default() },
-            ModSpec { id: "b".into(), kind: "stat".into(), field: "fuel_dl".into(), label: "FUEL".into(), x: 10, y: 10, w: 100, h: 50, display: 1, ..Default::default() },
+            ModSpec {
+                id: "a".into(),
+                kind: "gearSpeed".into(),
+                x: 170,
+                y: 120,
+                w: 140,
+                h: 80,
+                display: 0,
+                ..Default::default()
+            },
+            ModSpec {
+                id: "b".into(),
+                kind: "stat".into(),
+                field: "fuel_dl".into(),
+                label: "FUEL".into(),
+                x: 10,
+                y: 10,
+                w: 100,
+                h: 50,
+                display: 1,
+                ..Default::default()
+            },
         ];
         let json = super::build_uidoc_json(&s);
         let doc: pith_ui::UiDoc = serde_json::from_str(&json).expect("firmware-side decode");

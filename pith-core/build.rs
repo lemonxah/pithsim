@@ -14,8 +14,8 @@ fn main() {
     let json_path = "../firmware/ddu/main/field_registry.json";
     println!("cargo:rerun-if-changed={json_path}");
 
-    let raw = std::fs::read_to_string(json_path)
-        .unwrap_or_else(|e| panic!("read {json_path}: {e}"));
+    let raw =
+        std::fs::read_to_string(json_path).unwrap_or_else(|e| panic!("read {json_path}: {e}"));
     let doc: serde_json::Value =
         serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {json_path}: {e}"));
     let fields = doc["fields"].as_array().expect("`fields` array");
@@ -66,7 +66,9 @@ fn main() {
     // set_field: inverse of field_value — write a raw value into the field id's
     // struct slot. Lets a flat field array (e.g. the dashboard's telem[]) be
     // rehydrated into a Telemetry for the shared renderer.
-    out.push_str("/// Write raw value `v` into field `id` (1-based); no-op for none / out of range.\n");
+    out.push_str(
+        "/// Write raw value `v` into field `id` (1-based); no-op for none / out of range.\n",
+    );
     out.push_str("pub fn set_field(t: &mut Telemetry, id: usize, v: i32) {\n");
     out.push_str("    match id {\n");
     for (idx, f) in fields.iter().enumerate() {

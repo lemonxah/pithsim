@@ -8,13 +8,26 @@
 pub use pith_core::format::{format as fmtc_format, Fmt, RuleOp as Op, FMT_NAMES, OP_NAMES};
 
 /// UI dropdown palette tokens (the editor's 8-token subset — no bg/panel).
-pub const PALETTE_TOKENS: [&str; 8] =
-    ["white", "dim", "green", "amber", "red", "cyan", "blue", "purple"];
+pub const PALETTE_TOKENS: [&str; 8] = [
+    "white", "dim", "green", "amber", "red", "cyan", "blue", "purple",
+];
 
 /// Authoring kind options (the race-screen module palette).
 pub const KIND_OPTIONS: [&str; 14] = [
-    "stat", "bar", "gear", "gearSpeed", "rpmStrip", "tyreGrid", "tcDual", "sectors", "lapPair",
-    "map", "flag", "position", "relatives", "button",
+    "stat",
+    "bar",
+    "gear",
+    "gearSpeed",
+    "rpmStrip",
+    "tyreGrid",
+    "tcDual",
+    "sectors",
+    "lapPair",
+    "map",
+    "flag",
+    "position",
+    "relatives",
+    "button",
 ];
 
 pub fn fmt_from_str(s: &str) -> Fmt {
@@ -30,7 +43,10 @@ pub fn rule_match(v: i32, op: Op, rule_v: i32) -> bool {
 /// Index of `v` in a fixed token list, or -1 (mirrors C++ idxOf, for ComboBox
 /// current-index).
 pub fn idx_of(list: &[&str], v: &str) -> i32 {
-    list.iter().position(|&x| x == v).map(|i| i as i32).unwrap_or(-1)
+    list.iter()
+        .position(|&x| x == v)
+        .map(|i| i as i32)
+        .unwrap_or(-1)
 }
 
 /// App-side palette token -> 0xRRGGBB (the dashboard's colour space; the device

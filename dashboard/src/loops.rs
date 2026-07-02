@@ -7,13 +7,13 @@ use crate::ctx::Ctx;
 use crate::games::detect_game;
 use crate::net::cardata::{auto_apply_car_model, prefetch_game_data};
 use crate::persist::{race_layout_from_json, save_race_layout};
-use pith_sim::decoders::try_decode;
 use crate::telemetry::frame_from_telem;
 use crate::ui_bridge::cars::{push_car_results, push_classes, rebuild_filtered};
 use crate::ui_bridge::firmware::{recompute_update_available, refresh_serial_ports};
 use crate::ui_bridge::telemetry::{apply_caps, apply_status, apply_telemetry};
 use crate::ui_bridge::{model, refresh_race, sstr};
 use crate::{AppState, CarLib, Firmware, FwComponent, RaceLayout, Telemetry, TelemetryUdp};
+use pith_sim::decoders::try_decode;
 
 pub fn try_connect(ctx: &Arc<Ctx>) -> bool {
     let mut d = ctx.dash();
@@ -67,8 +67,9 @@ pub(crate) fn push_sim_frame(
         s.last_sim_frame = Some(now);
         // Cache this source's latest frame (+ which computed fields it supplies,
         // sticky); expire sources silent for >2 s.
-        s.src_frames
-            .retain(|(lbl, _, at, _)| lbl == source || now.duration_since(*at) < Duration::from_secs(2));
+        s.src_frames.retain(|(lbl, _, at, _)| {
+            lbl == source || now.duration_since(*at) < Duration::from_secs(2)
+        });
         match s.src_frames.iter_mut().find(|(lbl, _, _, _)| lbl == source) {
             Some(e) => {
                 e.1 = incoming;
@@ -246,21 +247,44 @@ fn sim_telem(t: f32, redline: i32) -> pith_core::simhub::Telemetry {
     // Tyre surface temps (3 zones/corner, 0.1°C) — hotter with revs, per-corner spread
     let base = 78.0 + rev * 25.0;
     let z = |off: f32| ((base + off) * 10.0) as i32;
-    d.tt_fl_i = z(6.0); d.tt_fl_m = z(3.0); d.tt_fl_o = z(0.0);
-    d.tt_fr_i = z(5.0); d.tt_fr_m = z(2.0); d.tt_fr_o = z(-1.0);
-    d.tt_rl_i = z(8.0); d.tt_rl_m = z(5.0); d.tt_rl_o = z(2.0);
-    d.tt_rr_i = z(7.0); d.tt_rr_m = z(4.0); d.tt_rr_o = z(1.0);
-    d.tt_avg_fl = z(3.0); d.tt_avg_fr = z(2.0); d.tt_avg_rl = z(5.0); d.tt_avg_rr = z(4.0);
-    d.tt_carc_fl = z(-8.0); d.tt_carc_fr = z(-9.0); d.tt_carc_rl = z(-6.0); d.tt_carc_rr = z(-7.0);
+    d.tt_fl_i = z(6.0);
+    d.tt_fl_m = z(3.0);
+    d.tt_fl_o = z(0.0);
+    d.tt_fr_i = z(5.0);
+    d.tt_fr_m = z(2.0);
+    d.tt_fr_o = z(-1.0);
+    d.tt_rl_i = z(8.0);
+    d.tt_rl_m = z(5.0);
+    d.tt_rl_o = z(2.0);
+    d.tt_rr_i = z(7.0);
+    d.tt_rr_m = z(4.0);
+    d.tt_rr_o = z(1.0);
+    d.tt_avg_fl = z(3.0);
+    d.tt_avg_fr = z(2.0);
+    d.tt_avg_rl = z(5.0);
+    d.tt_avg_rr = z(4.0);
+    d.tt_carc_fl = z(-8.0);
+    d.tt_carc_fr = z(-9.0);
+    d.tt_carc_rl = z(-6.0);
+    d.tt_carc_rr = z(-7.0);
 
     // Pressures (0.1 kPa) + wear (% remaining)
-    d.tp_fl = 1720; d.tp_fr = 1735; d.tp_rl = 1680; d.tp_rr = 1695;
+    d.tp_fl = 1720;
+    d.tp_fr = 1735;
+    d.tp_rl = 1680;
+    d.tp_rr = 1695;
     let wear = (100.0 - drain * 40.0) as i32;
-    d.tw_fl = wear; d.tw_fr = wear - 2; d.tw_rl = wear - 4; d.tw_rr = wear - 3;
+    d.tw_fl = wear;
+    d.tw_fr = wear - 2;
+    d.tw_rl = wear - 4;
+    d.tw_rr = wear - 3;
 
     // Brake temps (°C)
     let bt = 320 + (rev * 280.0) as i32;
-    d.bt_fl = bt; d.bt_fr = bt - 15; d.bt_rl = bt - 120; d.bt_rr = bt - 130;
+    d.bt_fl = bt;
+    d.bt_fr = bt - 15;
+    d.bt_rl = bt - 120;
+    d.bt_rr = bt - 130;
 
     // Inputs
     d.throttle = (rev * 100.0) as i32;
@@ -288,7 +312,10 @@ fn sim_telem(t: f32, redline: i32) -> pith_core::simhub::Telemetry {
     d.fuel_is_ve = 0;
 
     // Compounds (medium)
-    d.comp_fl = 1; d.comp_fr = 1; d.comp_rl = 1; d.comp_rr = 1;
+    d.comp_fl = 1;
+    d.comp_fr = 1;
+    d.comp_rl = 1;
+    d.comp_rr = 1;
 
     // Extra TC channels
     d.tc_slip = (rev * 100.0) as i32;
@@ -378,7 +405,10 @@ fn apply_track(ctx: &Arc<Ctx>, track: &str) {
 /// passive UDP decoders. Ties fall back to first-seen order.
 fn source_priority(label: &str) -> u8 {
     let l = label.to_ascii_lowercase();
-    if l.contains("shim") || l.contains("shm") || matches!(label, "rF2/LMU" | "AC/ACC" | "AC EVO" | "RaceRoom") {
+    if l.contains("shim")
+        || l.contains("shm")
+        || matches!(label, "rF2/LMU" | "AC/ACC" | "AC EVO" | "RaceRoom")
+    {
         4
     } else if matches!(label, "ACC" | "Assetto Corsa" | "Gran Turismo 7") {
         3
@@ -508,7 +538,13 @@ pub fn udp_listener_loop(ctx: Arc<Ctx>) {
                                 Some((s, t)) if t.elapsed() < Duration::from_secs(3) => s.as_str(),
                                 _ => "SimHub plugin",
                             };
-                            handle_text_frame(&ctx, line, cur_src, &mut last_push, &mut last_preview);
+                            handle_text_frame(
+                                &ctx,
+                                line,
+                                cur_src,
+                                &mut last_push,
+                                &mut last_preview,
+                            );
                         }
                     }
                     if had_frame {
@@ -957,10 +993,23 @@ fn acc_relatives(
 
     let best_ms = {
         let pb = player.best_ms;
-        let field = live.iter().map(|u| u.best_ms).filter(|&b| b > 0).min().unwrap_or(0);
-        if pb > 0 { pb } else { field }
+        let field = live
+            .iter()
+            .map(|u| u.best_ms)
+            .filter(|&b| b > 0)
+            .min()
+            .unwrap_or(0);
+        if pb > 0 {
+            pb
+        } else {
+            field
+        }
     };
-    let pace_mps = if best_ms > 0 { track_m as f64 / (best_ms as f64 / 1000.0) } else { 55.0 };
+    let pace_mps = if best_ms > 0 {
+        track_m as f64 / (best_ms as f64 / 1000.0)
+    } else {
+        55.0
+    };
 
     // Race progress in laps (laps + spline) — the leader is the furthest along.
     let prog = |u: &acc::CarUpdate| u.laps as f64 + u.spline.clamp(0.0, 1.0) as f64;
@@ -982,8 +1031,9 @@ fn acc_relatives(
         } else {
             (d * track_m as f64 / pace_mps * 1000.0).round() as i32
         };
-        let gap_leader_ms =
-            (((leader_prog - prog(u)).max(0.0) * track_m as f64) / pace_mps * 1000.0).round() as i32;
+        let gap_leader_ms = (((leader_prog - prog(u)).max(0.0) * track_m as f64) / pace_mps
+            * 1000.0)
+            .round() as i32;
         let mut flags = 0u8;
         if u.car_index == focused {
             flags |= FLAG_PLAYER;
@@ -1023,7 +1073,12 @@ pub fn acc_connector_loop(ctx: Arc<Ctx>) {
         }
         let (enabled, host, port, password) = {
             let s = ctx.lock();
-            (s.acc_enabled, s.acc_host.clone(), s.acc_port, s.acc_password.clone())
+            (
+                s.acc_enabled,
+                s.acc_host.clone(),
+                s.acc_port,
+                s.acc_password.clone(),
+            )
         };
         // Only reach out while ACC is actually running (auto-detected) — no point
         // spamming REGISTER at a dead port otherwise.
@@ -1077,7 +1132,10 @@ pub fn acc_connector_loop(ctx: Arc<Ctx>) {
                 drop(s);
                 if cfg_changed || detected_sim(&ctx) != "assettocorsacompetizione" {
                     if let Some(id) = conn_id {
-                        let _ = sock.send_to(&acc::encode_request(acc::UNREGISTER, id), (host.as_str(), port));
+                        let _ = sock.send_to(
+                            &acc::encode_request(acc::UNREGISTER, id),
+                            (host.as_str(), port),
+                        );
                     }
                     continue 'outer;
                 }
@@ -1102,9 +1160,15 @@ pub fn acc_connector_loop(ctx: Arc<Ctx>) {
                             );
                             set_acc_status(&ctx, "Connected");
                         }
-                        acc::AccMsg::RegisterFailed => set_acc_status(&ctx, "Rejected — check password"),
+                        acc::AccMsg::RegisterFailed => {
+                            set_acc_status(&ctx, "Rejected — check password")
+                        }
                         acc::AccMsg::Realtime { focused_car_index } => focused = focused_car_index,
-                        acc::AccMsg::EntryCar { car_index, name, race_number } => {
+                        acc::AccMsg::EntryCar {
+                            car_index,
+                            name,
+                            race_number,
+                        } => {
                             names.insert(car_index, (name, race_number));
                         }
                         acc::AccMsg::Track { name, meters } => {
@@ -1114,7 +1178,13 @@ pub fn acc_connector_loop(ctx: Arc<Ctx>) {
                         acc::AccMsg::Car(u) => {
                             if focused < 0 || u.car_index == focused {
                                 let frame = acc_frame(&u);
-                                push_sim_frame(&ctx, &frame, "ACC", &mut last_push, &mut last_preview);
+                                push_sim_frame(
+                                    &ctx,
+                                    &frame,
+                                    "ACC",
+                                    &mut last_push,
+                                    &mut last_preview,
+                                );
                                 if last_src.elapsed() >= Duration::from_secs(1) {
                                     last_src = Instant::now();
                                     set_udp_source(&ctx, "ACC");
@@ -1223,7 +1293,10 @@ pub fn ac_connector_loop(ctx: Arc<Ctx>) {
                 last_rx = Instant::now();
                 let data = &buf[..n];
                 if ac::is_handshake_response(data) {
-                    let _ = sock.send_to(&ac::encode_op(ac::OP_SUBSCRIBE_UPDATE), (host.as_str(), port));
+                    let _ = sock.send_to(
+                        &ac::encode_op(ac::OP_SUBSCRIBE_UPDATE),
+                        (host.as_str(), port),
+                    );
                     subscribed = true;
                     set_ac_status(&ctx, "Connected");
                     // The handshake reply carries the car + track names.
@@ -1233,7 +1306,13 @@ pub fn ac_connector_loop(ctx: Arc<Ctx>) {
                     }
                 } else if let Some(t) = ac::parse_rtcarinfo(data) {
                     let frame = frame_from_telem(&t);
-                    push_sim_frame(&ctx, &frame, "Assetto Corsa", &mut last_push, &mut last_preview);
+                    push_sim_frame(
+                        &ctx,
+                        &frame,
+                        "Assetto Corsa",
+                        &mut last_push,
+                        &mut last_preview,
+                    );
                     if last_src.elapsed() >= Duration::from_secs(1) {
                         last_src = Instant::now();
                         set_udp_source(&ctx, "Assetto Corsa");
@@ -1310,7 +1389,13 @@ pub fn gt7_connector_loop(ctx: Arc<Ctx>) {
                 if let Some(pt) = gt7::decrypt(&buf[..n]) {
                     if let Some(t) = gt7::parse(&pt) {
                         let frame = frame_from_telem(&t);
-                        push_sim_frame(&ctx, &frame, "Gran Turismo 7", &mut last_push, &mut last_preview);
+                        push_sim_frame(
+                            &ctx,
+                            &frame,
+                            "Gran Turismo 7",
+                            &mut last_push,
+                            &mut last_preview,
+                        );
                         set_gt7_status(&ctx, "Connected");
                         if last_src.elapsed() >= Duration::from_secs(1) {
                             last_src = Instant::now();
@@ -1319,9 +1404,7 @@ pub fn gt7_connector_loop(ctx: Arc<Ctx>) {
                             // sends only a numeric CarCode). Same path as @CM:
                             // library match (none for GT7 yet) → generic
                             // max-RPM shift lights + the detected-car label.
-                            if let Some(name) =
-                                gt7::car_code(&pt).and_then(gt7::car_name)
-                            {
+                            if let Some(name) = gt7::car_code(&pt).and_then(gt7::car_name) {
                                 apply_car_model(&ctx, name);
                             }
                         }

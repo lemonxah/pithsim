@@ -43,7 +43,13 @@ struct Accum {
 
 fn state() -> &'static Mutex<Accum> {
     static S: OnceLock<Mutex<Accum>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(Accum { t: Telemetry::idle(), car: None, split0_ms: 0 }))
+    S.get_or_init(|| {
+        Mutex::new(Accum {
+            t: Telemetry::idle(),
+            car: None,
+            split0_ms: 0,
+        })
+    })
 }
 
 /// NUL-terminated ASCII string from a fixed 100-byte field.
@@ -81,7 +87,9 @@ impl GameDecoder for PiBoSoDecoder {
                         // MX Bikes / GP Bikes-style: steer@153 throttle@157
                         // frontBrake@161 rearBrake@165 clutch@169 (0..1)
                         a.t.throttle = (le::f32(b, 157) * 100.0).round().clamp(0.0, 100.0) as i32;
-                        a.t.brake = (le::f32(b, 161).max(le::f32(b, 165)) * 100.0).round().clamp(0.0, 100.0) as i32;
+                        a.t.brake = (le::f32(b, 161).max(le::f32(b, 165)) * 100.0)
+                            .round()
+                            .clamp(0.0, 100.0) as i32;
                         a.t.clutch = (le::f32(b, 169) * 100.0).round().clamp(0.0, 100.0) as i32;
                     }
                     189 => {
@@ -110,7 +118,11 @@ impl GameDecoder for PiBoSoDecoder {
                 let shift = le::i32(b, shift_off);
                 if (1000..40000).contains(&max) {
                     a.t.max_rpm = max;
-                    a.t.shift_rpm = if (1000..=max).contains(&shift) { shift } else { max };
+                    a.t.shift_rpm = if (1000..=max).contains(&shift) {
+                        shift
+                    } else {
+                        max
+                    };
                 }
             }
             b"lap " if b.len() >= HEADER + 16 => {
@@ -142,7 +154,10 @@ impl GameDecoder for PiBoSoDecoder {
             b"sesn" => {} // session info — nothing the dash shows yet
             _ => return None,
         }
-        Some(Decoded { telem: a.t, car: a.car.clone() })
+        Some(Decoded {
+            telem: a.t,
+            car: a.car.clone(),
+        })
     }
 }
 

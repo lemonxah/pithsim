@@ -84,7 +84,8 @@ mod tests {
 
     fn pkt() -> Vec<u8> {
         let mut b = vec![0u8; 264];
-        let put = |b: &mut [u8], i: usize, v: f32| b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        let put =
+            |b: &mut [u8], i: usize, v: f32| b[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         put(&mut b, 7, 50.0); // speed m/s
         put(&mut b, 37, 750.0); // rpm/10 → 7500
         put(&mut b, 63, 800.0); // max rpm/10 → 8000

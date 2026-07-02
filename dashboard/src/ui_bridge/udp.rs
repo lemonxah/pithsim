@@ -6,8 +6,8 @@ use slint::ComponentHandle;
 
 use super::{model, sstr};
 use crate::state::State;
-use pith_sim::decoders::supported_games;
 use crate::{AppWindow, TelemetryUdp};
+use pith_sim::decoders::supported_games;
 
 /// Push the persisted config (port) + the static supported-game list. Called
 /// once at startup and after the port changes.

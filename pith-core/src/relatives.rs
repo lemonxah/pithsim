@@ -21,17 +21,24 @@ pub const FLAG_IN_PITS: u8 = 1 << 1;
 /// One car in the relatives/standings list.
 #[derive(Clone, Copy)]
 pub struct RelCar {
-    pub place: u8,         // race position, 1-based
-    pub gap_leader_ms: i32, // gap to the leader (standings view) — sim-accurate
-    pub gap_rel_ms: i32,   // signed gap to the player on track (+ ahead, − behind)
-    pub laps: i16,         // laps completed
-    pub flags: u8,         // FLAG_PLAYER | FLAG_IN_PITS
+    pub place: u8,            // race position, 1-based
+    pub gap_leader_ms: i32,   // gap to the leader (standings view) — sim-accurate
+    pub gap_rel_ms: i32,      // signed gap to the player on track (+ ahead, − behind)
+    pub laps: i16,            // laps completed
+    pub flags: u8,            // FLAG_PLAYER | FLAG_IN_PITS
     pub name: [u8; NAME_LEN], // ASCII, NUL-padded
 }
 
 impl Default for RelCar {
     fn default() -> Self {
-        Self { place: 0, gap_leader_ms: 0, gap_rel_ms: 0, laps: 0, flags: 0, name: [0; NAME_LEN] }
+        Self {
+            place: 0,
+            gap_leader_ms: 0,
+            gap_rel_ms: 0,
+            laps: 0,
+            flags: 0,
+            name: [0; NAME_LEN],
+        }
     }
 }
 
@@ -52,7 +59,11 @@ impl RelCar {
         self.name = [0; NAME_LEN];
         for (dst, b) in self.name.iter_mut().zip(s.bytes()) {
             // keep it ASCII-printable and free of the wire separators.
-            *dst = if (0x20..0x7f).contains(&b) && b != b'|' && b != b',' { b } else { b'_' };
+            *dst = if (0x20..0x7f).contains(&b) && b != b'|' && b != b',' {
+                b
+            } else {
+                b'_'
+            };
         }
     }
 }
@@ -67,7 +78,11 @@ pub struct Relatives {
 
 impl Default for Relatives {
     fn default() -> Self {
-        Self { cars: [RelCar::default(); MAX_REL], count: 0, player: 0 }
+        Self {
+            cars: [RelCar::default(); MAX_REL],
+            count: 0,
+            player: 0,
+        }
     }
 }
 
@@ -105,7 +120,10 @@ impl Relatives {
         let body = line.strip_prefix("@REL|")?;
         let mut parts = body.split('|');
         let player: u8 = parts.next()?.parse().ok()?;
-        let mut out = Relatives { player, ..Default::default() };
+        let mut out = Relatives {
+            player,
+            ..Default::default()
+        };
         for rec in parts {
             if out.count as usize >= MAX_REL {
                 break;
@@ -177,11 +195,20 @@ pub fn parse_rf2_relatives(scoring: &[u8]) -> Option<Relatives> {
         // mDriverName[32]@4 is the actual driver; mVehicleName[64]@36 is the car/
         // livery ("#21:WEC …" in LMU). Prefer the driver, fall back to the vehicle.
         let read = |off: usize, max: usize| {
-            let end = (b + off..b + off + max).take_while(|&o| scoring[o] != 0).count();
-            core::str::from_utf8(&scoring[b + off..b + off + end]).unwrap_or("").trim().to_string()
+            let end = (b + off..b + off + max)
+                .take_while(|&o| scoring[o] != 0)
+                .count();
+            core::str::from_utf8(&scoring[b + off..b + off + end])
+                .unwrap_or("")
+                .trim()
+                .to_string()
         };
         let driver = read(4, 32);
-        let name = if driver.is_empty() { read(36, 64) } else { driver };
+        let name = if driver.is_empty() {
+            read(36, 64)
+        } else {
+            driver
+        };
         cars.push(RawCar {
             place: scoring[b + 199],
             laps: le::i16(scoring, b + 100),
@@ -200,10 +227,24 @@ pub fn parse_rf2_relatives(scoring: &[u8]) -> Option<Relatives> {
     // else the field's fastest, else a nominal 55 m/s.
     let best_s = {
         let pb = cars[player_i].best_s;
-        let any = cars.iter().map(|c| c.best_s).filter(|&s| s > 0.0).fold(f64::INFINITY, f64::min);
-        if pb > 0.0 { pb } else if any.is_finite() { any } else { 0.0 }
+        let any = cars
+            .iter()
+            .map(|c| c.best_s)
+            .filter(|&s| s > 0.0)
+            .fold(f64::INFINITY, f64::min);
+        if pb > 0.0 {
+            pb
+        } else if any.is_finite() {
+            any
+        } else {
+            0.0
+        }
     };
-    let pace_mps = if best_s > 0.0 { track_len / best_s } else { 55.0 };
+    let pace_mps = if best_s > 0.0 {
+        track_len / best_s
+    } else {
+        55.0
+    };
 
     let mut built: Vec<RelCar> = Vec::with_capacity(cars.len());
     for (i, c) in cars.iter().enumerate() {
@@ -214,7 +255,11 @@ pub fn parse_rf2_relatives(scoring: &[u8]) -> Option<Relatives> {
         } else if d < -track_len / 2.0 {
             d += track_len;
         }
-        let gap_rel_ms = if i == player_i { 0 } else { (d / pace_mps * 1000.0).round() as i32 };
+        let gap_rel_ms = if i == player_i {
+            0
+        } else {
+            (d / pace_mps * 1000.0).round() as i32
+        };
         let mut flags = 0u8;
         if c.is_player {
             flags |= FLAG_PLAYER;
@@ -251,7 +296,10 @@ pub fn short_name(name: &str) -> &str {
         t
     } else {
         // prefer a trailing surname-ish token if the tail fits
-        t.rsplit([' ', '_']).next().filter(|w| w.len() <= NAME_LEN).unwrap_or(&t[..NAME_LEN])
+        t.rsplit([' ', '_'])
+            .next()
+            .filter(|w| w.len() <= NAME_LEN)
+            .unwrap_or(&t[..NAME_LEN])
     }
 }
 
@@ -312,9 +360,23 @@ mod tests {
         let mut r = Relatives::default();
         r.player = 1;
         r.count = 2;
-        r.cars[0] = RelCar { place: 1, gap_leader_ms: 0, gap_rel_ms: -2300, laps: 5, flags: 0, name: [0; NAME_LEN] };
+        r.cars[0] = RelCar {
+            place: 1,
+            gap_leader_ms: 0,
+            gap_rel_ms: -2300,
+            laps: 5,
+            flags: 0,
+            name: [0; NAME_LEN],
+        };
         r.cars[0].set_name("VERSTAPPEN");
-        r.cars[1] = RelCar { place: 2, gap_leader_ms: 1450, gap_rel_ms: 0, laps: 5, flags: FLAG_PLAYER, name: [0; NAME_LEN] };
+        r.cars[1] = RelCar {
+            place: 2,
+            gap_leader_ms: 1450,
+            gap_rel_ms: 0,
+            laps: 5,
+            flags: FLAG_PLAYER,
+            name: [0; NAME_LEN],
+        };
         r.cars[1].set_name("HAMILTON");
         let wire = r.to_wire();
         let back = Relatives::from_wire(&wire).unwrap();
@@ -345,17 +407,18 @@ mod tests {
         let mut s = vec![0u8; VEH_BASE + 3 * VEH_STRIDE];
         s[116..120].copy_from_slice(&3i32.to_le_bytes()); // mNumVehicles
         s[100..108].copy_from_slice(&3000.0f64.to_le_bytes()); // track length 3 km
-        let mut set = |i: usize, place: u8, dist: f64, behind: f64, player: bool, name: &str, best: f64| {
-            let b = VEH_BASE + i * VEH_STRIDE;
-            let nb = name.as_bytes();
-            s[b + 36..b + 36 + nb.len()].copy_from_slice(nb);
-            s[b + 100..b + 102].copy_from_slice(&3i16.to_le_bytes()); // laps
-            s[b + 104..b + 112].copy_from_slice(&dist.to_le_bytes());
-            s[b + 144..b + 152].copy_from_slice(&best.to_le_bytes());
-            s[b + 196] = player as u8;
-            s[b + 199] = place;
-            s[b + 244..b + 252].copy_from_slice(&behind.to_le_bytes());
-        };
+        let mut set =
+            |i: usize, place: u8, dist: f64, behind: f64, player: bool, name: &str, best: f64| {
+                let b = VEH_BASE + i * VEH_STRIDE;
+                let nb = name.as_bytes();
+                s[b + 36..b + 36 + nb.len()].copy_from_slice(nb);
+                s[b + 100..b + 102].copy_from_slice(&3i16.to_le_bytes()); // laps
+                s[b + 104..b + 112].copy_from_slice(&dist.to_le_bytes());
+                s[b + 144..b + 152].copy_from_slice(&best.to_le_bytes());
+                s[b + 196] = player as u8;
+                s[b + 199] = place;
+                s[b + 244..b + 252].copy_from_slice(&behind.to_le_bytes());
+            };
         // leader at 1500 m, player 100 m behind on track, third car 100 m ahead.
         set(0, 1, 1500.0, 0.0, false, "LEADER", 60.0); // pace = 3000/60 = 50 m/s
         set(1, 2, 1400.0, 1.5, true, "PLAYER", 60.0);
@@ -367,7 +430,7 @@ mod tests {
         assert!(p.is_player());
         assert_eq!(p.gap_rel_ms, 0);
         assert_eq!(p.gap_leader_ms, 1500); // 1.5 s behind leader
-        // leader is 100 m ahead of player @ 50 m/s → +2000 ms
+                                           // leader is 100 m ahead of player @ 50 m/s → +2000 ms
         let lead = r.cars.iter().find(|c| c.place == 1).unwrap();
         assert_eq!(lead.gap_rel_ms, 2000);
         assert_eq!(lead.name_str(), "LEADER");

@@ -91,8 +91,12 @@ impl GameDecoder for F1Decoder {
                 t.gear = le::gear_byte(le::i8(b, base + 15) as i32);
                 t.rpm = le::u16(b, base + 16) as i32;
                 t.ignition = 1; // engine running while telemetry streams
-                // m_engineTemperature: uint8 (2026+) vs the older uint16.
-                t.water_c = if is_2026 { le::u8(b, base + 38) as i32 } else { le::u16(b, base + 38) as i32 };
+                                // m_engineTemperature: uint8 (2026+) vs the older uint16.
+                t.water_c = if is_2026 {
+                    le::u8(b, base + 38) as i32
+                } else {
+                    le::u16(b, base + 38) as i32
+                };
                 // Tyre surface temps, order [RL, RR, FL, FR] → all three zones.
                 let (rl, rr, fl, fr) = (
                     le::u8(b, base + 30) as i32,

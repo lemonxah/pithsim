@@ -17,9 +17,9 @@ pub fn device_present(vid: u16, pid: u16) -> bool {
 pub struct Hid {
     api: Option<HidApi>,
     dev: Option<HidDevice>,
-    rx: Vec<u8>,         // report id 2 — command-reply bytes
-    log_acc: Vec<u8>,    // report id 3 — partial device-log line
-    logs: Vec<String>,   // complete device-log lines awaiting the UI
+    rx: Vec<u8>,       // report id 2 — command-reply bytes
+    log_acc: Vec<u8>,  // report id 3 — partial device-log line
+    logs: Vec<String>, // complete device-log lines awaiting the UI
 }
 
 impl Hid {

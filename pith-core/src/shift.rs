@@ -46,10 +46,10 @@ impl Default for RevCfg {
 #[derive(Clone)]
 pub struct CarData {
     pub valid: bool,
-    pub led_count: usize,                       // ledNumber (clamped to CAR_LED_MAX)
-    pub blink_ms: u16,                          // redlineBlinkInterval
-    pub led_color: [u32; CAR_LED_MAX],          // per-LED RGB888
-    pub redline: [u16; CAR_GEARS],              // per-gear shift/redline rpm
+    pub led_count: usize,              // ledNumber (clamped to CAR_LED_MAX)
+    pub blink_ms: u16,                 // redlineBlinkInterval
+    pub led_color: [u32; CAR_LED_MAX], // per-LED RGB888
+    pub redline: [u16; CAR_GEARS],     // per-gear shift/redline rpm
     pub thresh: [[u16; CAR_LED_MAX]; CAR_GEARS], // per-gear per-LED on-threshold
     pub name: String,
 }
@@ -188,11 +188,14 @@ mod tests {
         // Near shift but below flash_pct (98% of 8000 = 7840): some lit, no strobe.
         let t = tel(b'3', 7000, 8800, 8000);
         assert_ne!(segment_rgb(&t, 0, count, &cfg, &car, 0), 0); // first (green) lit
-        // At/above flash_pct: strobes — off at now_ms=0, on at now_ms=FLASH_MS
-        // (matches the C `((now/FLASH_MS)&1) ? col : 0`).
+                                                                 // At/above flash_pct: strobes — off at now_ms=0, on at now_ms=FLASH_MS
+                                                                 // (matches the C `((now/FLASH_MS)&1) ? col : 0`).
         let t = tel(b'3', 8000, 8800, 8000);
         assert_eq!(segment_rgb(&t, 0, count, &cfg, &car, 0), 0);
-        assert_eq!(segment_rgb(&t, 0, count, &cfg, &car, FLASH_MS), cfg.col_flash);
+        assert_eq!(
+            segment_rgb(&t, 0, count, &cfg, &car, FLASH_MS),
+            cfg.col_flash
+        );
     }
 
     #[test]
@@ -200,7 +203,7 @@ mod tests {
         let cfg = RevCfg::default(); // 6 green, 3 red, 3 blue
         let car = CarData::default();
         let t = tel(b'4', 7800, 8800, 8000); // high enough to light most, below flash
-        // Force full fill by being just under flash threshold.
+                                             // Force full fill by being just under flash threshold.
         assert_eq!(segment_rgb(&t, 0, 12, &cfg, &car, 0), cfg.col_green);
         assert_eq!(segment_rgb(&t, 6, 12, &cfg, &car, 0), cfg.col_red);
         assert_eq!(segment_rgb(&t, 9, 12, &cfg, &car, 0), cfg.col_blue);
@@ -224,6 +227,9 @@ mod tests {
         // Over redline -> flash: off at now_ms=0, on at now_ms=blink_ms.
         let t = tel(b'2', 9200, 9500, 9000);
         assert_eq!(segment_rgb(&t, 0, 12, &cfg, &car, 0), 0);
-        assert_eq!(segment_rgb(&t, 0, 12, &cfg, &car, car.blink_ms as i64), 0x112233);
+        assert_eq!(
+            segment_rgb(&t, 0, 12, &cfg, &car, car.blink_ms as i64),
+            0x112233
+        );
     }
 }

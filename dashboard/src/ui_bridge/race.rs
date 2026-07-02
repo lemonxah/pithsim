@@ -127,7 +127,11 @@ pub fn push_zones(ui: &AppWindow, s: &State) {
 pub fn push_nodes(ui: &AppWindow, s: &State) {
     let rl = ui.global::<RaceLayout>();
     let sel = rl.get_sel_id().to_string();
-    let tabs = s.tabs.get(s.edit_display as usize).cloned().unwrap_or_default();
+    let tabs = s
+        .tabs
+        .get(s.edit_display as usize)
+        .cloned()
+        .unwrap_or_default();
     let tabbed = !tabs.is_empty();
     let boxes: Vec<NodeBox> = s
         .nodes
@@ -332,10 +336,18 @@ pub fn push_elems(ui: &AppWindow, s: &State) {
                         action: sstr(&e.action),
                         toggle: e.toggle,
                         hid: e.hid,
-                        kind_idx: ELEM_KINDS.iter().position(|k| k.0 == e.kind).map(|i| i as i32).unwrap_or(0),
+                        kind_idx: ELEM_KINDS
+                            .iter()
+                            .position(|k| k.0 == e.kind)
+                            .map(|i| i as i32)
+                            .unwrap_or(0),
                         field_idx: {
                             let fid = field_id_from_str(&e.field);
-                            if fid > 0 { fid as i32 - 1 } else { -1 }
+                            if fid > 0 {
+                                fid as i32 - 1
+                            } else {
+                                -1
+                            }
                         },
                         base_idx: idx_of(&PALETTE_TOKENS, &e.base),
                     }
@@ -362,7 +374,10 @@ pub fn push_editor_options(ui: &AppWindow, s: &State) {
     rl.set_palette_colors(model(palette_colors));
     rl.set_fmt_options(model(fmts));
     push_theme_swatches(ui, s);
-    let tracks: Vec<SharedString> = crate::trackmap::TRACK_NAMES.iter().map(|t| sstr(t)).collect();
+    let tracks: Vec<SharedString> = crate::trackmap::TRACK_NAMES
+        .iter()
+        .map(|t| sstr(t))
+        .collect();
     rl.set_map_tracks(model(tracks));
     rl.set_map_track_idx(crate::trackmap::track_index(&s.map_track));
 }

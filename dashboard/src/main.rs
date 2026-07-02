@@ -42,7 +42,10 @@ fn main() {
     // (for the README/docs) and exits.
     let args: Vec<String> = std::env::args().collect();
     if let Some(p) = args.iter().position(|a| a == "--shots") {
-        let dir = args.get(p + 1).map(String::as_str).unwrap_or("docs/screenshots");
+        let dir = args
+            .get(p + 1)
+            .map(String::as_str)
+            .unwrap_or("docs/screenshots");
         screenshot::run(&ui, &rt, dir);
         return;
     }

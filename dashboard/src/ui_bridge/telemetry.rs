@@ -43,8 +43,7 @@ fn c_atof(s: &str) -> f32 {
     while end < b.len() {
         let c = b[end];
         if c.is_ascii_digit()
-            || ((c == b'-' || c == b'+')
-                && (end == 0 || b[end - 1] == b'e' || b[end - 1] == b'E'))
+            || ((c == b'-' || c == b'+') && (end == 0 || b[end - 1] == b'e' || b[end - 1] == b'E'))
         {
             end += 1;
         } else if c == b'.' && !seen_dot && !seen_e {
@@ -260,8 +259,14 @@ pub fn apply_caps(ui: &AppWindow, s: &mut State, line: &str) {
             .map(|x| x as i32)
             .unwrap_or(s.disp_rot)
             .clamp(0, 3);
-        s.disp_flip_h = d.get("fh").and_then(|x| x.as_bool()).unwrap_or(s.disp_flip_h);
-        s.disp_flip_v = d.get("fv").and_then(|x| x.as_bool()).unwrap_or(s.disp_flip_v);
+        s.disp_flip_h = d
+            .get("fh")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(s.disp_flip_h);
+        s.disp_flip_v = d
+            .get("fv")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(s.disp_flip_v);
         s.disp_bgr = d.get("bgr").and_then(|x| x.as_bool()).unwrap_or(s.disp_bgr);
         s.disp_inv = d.get("inv").and_then(|x| x.as_bool()).unwrap_or(s.disp_inv);
         let dc = ui.global::<crate::DeviceCfg>();

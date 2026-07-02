@@ -28,7 +28,12 @@ const TRACK_DATA: u8 = 5;
 const INVALID_LAP: i32 = i32::MAX; // sentinel for "no time"
 
 /// Build the REGISTER datagram.
-pub fn encode_register(display_name: &str, conn_pw: &str, interval_ms: i32, cmd_pw: &str) -> Vec<u8> {
+pub fn encode_register(
+    display_name: &str,
+    conn_pw: &str,
+    interval_ms: i32,
+    cmd_pw: &str,
+) -> Vec<u8> {
     let mut b = Vec::with_capacity(32);
     b.push(REGISTER);
     b.push(PROTOCOL_VERSION);
@@ -65,7 +70,11 @@ pub enum AccMsg {
     Car(CarUpdate),
     /// One entry-list car: index + display name (driver surname, else team) +
     /// race number — feeds the relatives/standings widget's labels.
-    EntryCar { car_index: i32, name: String, race_number: i32 },
+    EntryCar {
+        car_index: i32,
+        name: String,
+        race_number: i32,
+    },
     /// Track info: name + length in meters (needed to turn spline positions
     /// into on-track gaps).
     Track { name: String, meters: i32 },
@@ -126,14 +135,14 @@ pub fn parse(b: &[u8]) -> Option<AccMsg> {
             let car_index = c.u16()? as i32;
             c.skip(2)?; // driverIndex
             c.skip(1)?; // driverCount
-            // Gear bias: LIVE ACC (verified in-game 2026-07: with -2 every gear
-            // displayed one LOW — 1st showed N, N showed R) sends the shm-style
-            // encoding raw 0=R, 1=N, 2=1st → decode raw-1. NOTE the official
-            // ksBroadcastingNetwork client source says `ReadByte() - 2` ("-2
-            // makes the R -1, N 0"), which contradicts what the shipping game
-            // actually emits — trust the live packet, not the SDK mirror. If
-            // gear ever reads one HIGH here, capture the raw byte before
-            // changing this again.
+                        // Gear bias: LIVE ACC (verified in-game 2026-07: with -2 every gear
+                        // displayed one LOW — 1st showed N, N showed R) sends the shm-style
+                        // encoding raw 0=R, 1=N, 2=1st → decode raw-1. NOTE the official
+                        // ksBroadcastingNetwork client source says `ReadByte() - 2` ("-2
+                        // makes the R -1, N 0"), which contradicts what the shipping game
+                        // actually emits — trust the live packet, not the SDK mirror. If
+                        // gear ever reads one HIGH here, capture the raw byte before
+                        // changing this again.
             let gear = c.u8()? as i32 - 1;
             let world_x = c.f32()?;
             let world_y = c.f32()?;
@@ -189,7 +198,11 @@ pub fn parse(b: &[u8]) -> Option<AccMsg> {
             if name.trim().is_empty() {
                 name = team;
             }
-            Some(AccMsg::EntryCar { car_index, name: name.trim().to_string(), race_number })
+            Some(AccMsg::EntryCar {
+                car_index,
+                name: name.trim().to_string(),
+                race_number,
+            })
         }
         TRACK_DATA => {
             c.skip(4)?; // connectionId

@@ -77,9 +77,17 @@ pub fn builtin_car_items() -> Vec<CarItem> {
             out.push(CarItem {
                 sim: sim.to_string(),
                 name: trim(j.get("carName").and_then(|x| x.as_str()).unwrap_or(b.key)),
-                id: j.get("carId").and_then(|x| x.as_str()).unwrap_or(b.key).to_string(),
+                id: j
+                    .get("carId")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or(b.key)
+                    .to_string(),
                 path: format!("builtin:{}", b.key),
-                klass: j.get("carClass").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                klass: j
+                    .get("carClass")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string(),
                 redline: derive_redline(&j),
                 led_n: cols.len() as i32,
                 led_cols: cols.clone(),
@@ -95,7 +103,9 @@ pub fn builtin_car_items() -> Vec<CarItem> {
 /// on the device" dedup key, so device-reconnect / game-switch invalidation
 /// (which clear that key) automatically re-push this profile too.
 pub fn apply_builtin_for_decoder(ctx: &Arc<Ctx>, s: &mut State, decoder_name: &str) -> bool {
-    let Some(b) = BUILTIN_CARS.iter().find(|b| !b.decoder.is_empty() && b.decoder == decoder_name)
+    let Some(b) = BUILTIN_CARS
+        .iter()
+        .find(|b| !b.decoder.is_empty() && b.decoder == decoder_name)
     else {
         return false;
     };
@@ -177,7 +187,8 @@ fn spawn_apply_profile(ctx: &Arc<Ctx>, car: CarItem, builtin: bool) {
             Err(_) => {
                 let label = car.name.clone();
                 ctx.ui_run(move |u| {
-                    u.global::<CarLib>().set_status(sstr(&format!("{label}: profile parse error")));
+                    u.global::<CarLib>()
+                        .set_status(sstr(&format!("{label}: profile parse error")));
                 });
                 return;
             }
@@ -196,7 +207,11 @@ fn spawn_apply_profile(ctx: &Arc<Ctx>, car: CarItem, builtin: bool) {
             if let Ok(j) = serde_json::from_str::<Value>(&body) {
                 load_car_into_leds(&mut s, &j);
             }
-            if let Some(ai) = s.all_cars.iter().position(|c| c.path == car.path && c.sim == car.sim) {
+            if let Some(ai) = s
+                .all_cars
+                .iter()
+                .position(|c| c.path == car.path && c.sim == car.sim)
+            {
                 if let Some(fi) = s.filtered.iter().position(|&x| x == ai) {
                     u.global::<CarLib>().set_sel(fi as i32);
                 }
@@ -764,10 +779,23 @@ mod tests {
             let j: Value = serde_json::from_str(b.json)
                 .unwrap_or_else(|e| panic!("cars/{}.json must be valid JSON: {e}", b.key));
             let redline = derive_redline(&j);
-            assert!(redline > 4000, "cars/{}.json: implausible redline {redline}", b.key);
+            assert!(
+                redline > 4000,
+                "cars/{}.json: implausible redline {redline}",
+                b.key
+            );
             let cols = parse_car_led_colors(&j);
-            assert_eq!(cols.len(), 12, "cars/{}.json: colors clamp to the strip", b.key);
-            assert!(cols.iter().any(|&c| c != 0), "cars/{}.json: all-blank colors", b.key);
+            assert_eq!(
+                cols.len(),
+                12,
+                "cars/{}.json: colors clamp to the strip",
+                b.key
+            );
+            assert!(
+                cols.iter().any(|&c| c != 0),
+                "cars/{}.json: all-blank colors",
+                b.key
+            );
             assert!(!b.sims.is_empty(), "cars/{}.json: no sims listed", b.key);
         }
     }
@@ -776,8 +804,12 @@ mod tests {
     fn builtin_items_seed_every_sim() {
         let items = builtin_car_items();
         // f1.json is listed under both F1 sims, keyed by the decoder's real name.
-        assert!(items.iter().any(|c| c.sim == "f12024" && c.path == "builtin:f1"));
-        assert!(items.iter().any(|c| c.sim == "f12025" && c.path == "builtin:f1"));
+        assert!(items
+            .iter()
+            .any(|c| c.sim == "f12024" && c.path == "builtin:f1"));
+        assert!(items
+            .iter()
+            .any(|c| c.sim == "f12025" && c.path == "builtin:f1"));
         assert!(BUILTIN_CARS.iter().any(|b| b.decoder == pith_sim::f1::NAME));
         assert_eq!(builtin_body("builtin:f1"), Some(BUILTIN_CARS[0].json));
         assert_eq!(builtin_body("f12025/220.json"), None);

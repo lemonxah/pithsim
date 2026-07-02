@@ -139,7 +139,13 @@ fn align_node(c: &Arc<Ctx>, horizontal: bool) {
         .nodes
         .iter()
         .filter(|m| m.id != id && m.display == disp)
-        .map(|m| if horizontal { m.y + m.h / 2 } else { m.x + m.w / 2 })
+        .map(|m| {
+            if horizontal {
+                m.y + m.h / 2
+            } else {
+                m.x + m.w / 2
+            }
+        })
         .min_by_key(|cc| (cc - sc).abs());
     if let Some(tc) = target {
         if let Some(m) = st.nodes.iter_mut().find(|m| m.id == id) {
@@ -222,17 +228,18 @@ pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
                 }
             });
         let c = ctx.clone();
-        ui.global::<TelemetryUdp>().on_set_ac(move |on, host, port| {
-            let mut s = c.lock();
-            s.ac_enabled = on;
-            s.ac_host = host.to_string();
-            s.ac_port = (port.clamp(1, 65535)) as u16;
-            save_udp_cfg(&s);
-            drop(s);
-            if let Some(u) = c.ui.upgrade() {
-                u.global::<TelemetryUdp>().set_ac_on(on);
-            }
-        });
+        ui.global::<TelemetryUdp>()
+            .on_set_ac(move |on, host, port| {
+                let mut s = c.lock();
+                s.ac_enabled = on;
+                s.ac_host = host.to_string();
+                s.ac_port = (port.clamp(1, 65535)) as u16;
+                save_udp_cfg(&s);
+                drop(s);
+                if let Some(u) = c.ui.upgrade() {
+                    u.global::<TelemetryUdp>().set_ac_on(on);
+                }
+            });
         let c = ctx.clone();
         ui.global::<TelemetryUdp>().on_set_gt7(move |on, host| {
             let mut s = c.lock();
@@ -891,10 +898,16 @@ pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
                     rl.set_snap_vx(gv);
                     rl.set_snap_hy(gh);
                     crate::ui_bridge::uidoc::push_preview(&u, &st);
-                    return crate::Pt { x: sx - ox, y: sy - oy };
+                    return crate::Pt {
+                        x: sx - ox,
+                        y: sy - oy,
+                    };
                 }
             }
-            crate::Pt { x: raw_dx, y: raw_dy }
+            crate::Pt {
+                x: raw_dx,
+                y: raw_dy,
+            }
         });
         // --- alignment buttons (act on the selected node) ---
         let c = ctx.clone();
@@ -1017,8 +1030,13 @@ pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
                     let removed = idx as usize;
                     st.tabs[d].remove(removed);
                     // drop nodes on the removed page; shift higher pages down one
-                    st.nodes.retain(|m| !(m.display as usize == d && m.page == idx));
-                    for m in st.nodes.iter_mut().filter(|m| m.display as usize == d && m.page > idx) {
+                    st.nodes
+                        .retain(|m| !(m.display as usize == d && m.page == idx));
+                    for m in st
+                        .nodes
+                        .iter_mut()
+                        .filter(|m| m.display as usize == d && m.page > idx)
+                    {
                         m.page -= 1;
                     }
                     st.edit_tab = st.edit_tab.min(st.tabs[d].len() as i32 - 1).max(0);

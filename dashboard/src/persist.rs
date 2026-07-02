@@ -380,7 +380,11 @@ pub fn apply_editor_layout_json(s: &mut State, j: &Value) -> bool {
         for (i, tv) in tabs.iter().take(2).enumerate() {
             s.tabs[i] = tv
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(|x| x.to_string())).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|x| x.to_string()))
+                        .collect()
+                })
                 .unwrap_or_default();
         }
     }
@@ -412,7 +416,11 @@ pub fn load_map_track() -> String {
     let body = read_file(&race_layout_path());
     serde_json::from_str::<Value>(&body)
         .ok()
-        .and_then(|j| j.get("map_track").and_then(|t| t.as_str()).map(|s| s.to_string()))
+        .and_then(|j| {
+            j.get("map_track")
+                .and_then(|t| t.as_str())
+                .map(|s| s.to_string())
+        })
         .unwrap_or_else(|| "(none)".to_string())
 }
 

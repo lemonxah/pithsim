@@ -49,7 +49,6 @@ pub struct Derived {
     delta: Delta,
 }
 
-
 impl Derived {
     /// Fill computed fields. `provided` says which fields a live source already
     /// supplies — those are left untouched (compute only when NO source has them).
@@ -109,7 +108,6 @@ impl BestLap {
         }
     }
 }
-
 
 /// Fuel burned per completed lap → `fuel_per_lap_ml` + `fuel_laps_x10`.
 #[derive(Default)]
@@ -182,7 +180,11 @@ impl Ve {
             self.last_lap = t.laps_done;
             self.lap_start_ve = t.virtual_energy;
             if used > 1 && used < 1000 {
-                self.per_lap = if self.per_lap == 0 { used } else { (self.per_lap * 3 + used) / 4 };
+                self.per_lap = if self.per_lap == 0 {
+                    used
+                } else {
+                    (self.per_lap * 3 + used) / 4
+                };
             }
         }
         if self.per_lap > 0 {
@@ -204,9 +206,9 @@ struct Delta {
     have_ref: bool,
     last_lap: i32,
     best_lap_ms: i32,
-    last_b: i32,           // last track bucket filled this lap (−1 = none yet)
-    ref_t: [i32; NB + 1],  // reference lap: elapsed ms at each bucket (−1 = unset)
-    cur_t: [i32; NB + 1],  // current lap, filled as we go
+    last_b: i32,          // last track bucket filled this lap (−1 = none yet)
+    ref_t: [i32; NB + 1], // reference lap: elapsed ms at each bucket (−1 = unset)
+    cur_t: [i32; NB + 1], // current lap, filled as we go
 }
 
 impl Default for Delta {

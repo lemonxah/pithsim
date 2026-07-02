@@ -1,4 +1,6 @@
-use crate::state::{BoardDef, BoardPin, BtnData, ColorRule, ElemSpec, ModSpec, Preset, State, Zone};
+use crate::state::{
+    BoardDef, BoardPin, BtnData, ColorRule, ElemSpec, ModSpec, Preset, State, Zone,
+};
 
 pub const CATALOG: &[(&str, &str, &str)] = &[
     ("gearSpeed", "Gear + Speed", "Big gear glyph and speed"),
@@ -8,7 +10,11 @@ pub const CATALOG: &[(&str, &str, &str)] = &[
     ("fuel", "Fuel", "Fuel remaining"),
     ("fuelPerLap", "Fuel per Lap", "Avg consumption"),
     ("tyres", "Tyre Temps", "4-corner tyre grid"),
-    ("allTyres", "All Tyres", "Fullscreen tyre panel: temps, pressure, brake, wear"),
+    (
+        "allTyres",
+        "All Tyres",
+        "Fullscreen tyre panel: temps, pressure, brake, wear",
+    ),
     ("tyreWear", "Tyre Wear", "4-corner wear %"),
     ("lapTimes", "Lap Times", "Current + best"),
     ("lastLap", "Last Lap", "Last lap time"),
@@ -120,16 +126,32 @@ pub fn default_spec(ty: &str) -> ModSpec {
         "battery" => {
             stat(&mut m, "battery_pct", "BATT", "%", "green");
             m.rules = vec![
-                ColorRule { op: "<".into(), v: 150, color: "red".into() },
-                ColorRule { op: "<".into(), v: 350, color: "amber".into() },
+                ColorRule {
+                    op: "<".into(),
+                    v: 150,
+                    color: "red".into(),
+                },
+                ColorRule {
+                    op: "<".into(),
+                    v: 350,
+                    color: "amber".into(),
+                },
             ];
         }
         "ers" => stat(&mut m, "ers_state", "ERS", "", "cyan"),
         "virtualEnergy" => {
             stat(&mut m, "virtual_energy", "ENERGY", "%", "green");
             m.rules = vec![
-                ColorRule { op: "<".into(), v: 50, color: "red".into() },
-                ColorRule { op: "<".into(), v: 150, color: "amber".into() },
+                ColorRule {
+                    op: "<".into(),
+                    v: 50,
+                    color: "red".into(),
+                },
+                ColorRule {
+                    op: "<".into(),
+                    v: 150,
+                    color: "amber".into(),
+                },
             ];
         }
         "vePerLap" => stat(&mut m, "ve_per_lap", "VE/LAP", "%", "white"),
@@ -142,12 +164,36 @@ pub fn default_spec(ty: &str) -> ModSpec {
             m.label = "FLAG".into();
             m.base = "dim".into(); // shown when no flag is out
             m.rules = vec![
-                ColorRule { op: "==".into(), v: 1, color: "green".into() },
-                ColorRule { op: "==".into(), v: 2, color: "amber".into() },
-                ColorRule { op: "==".into(), v: 3, color: "blue".into() },
-                ColorRule { op: "==".into(), v: 4, color: "white".into() },
-                ColorRule { op: "==".into(), v: 5, color: "white".into() },
-                ColorRule { op: "==".into(), v: 6, color: "red".into() },
+                ColorRule {
+                    op: "==".into(),
+                    v: 1,
+                    color: "green".into(),
+                },
+                ColorRule {
+                    op: "==".into(),
+                    v: 2,
+                    color: "amber".into(),
+                },
+                ColorRule {
+                    op: "==".into(),
+                    v: 3,
+                    color: "blue".into(),
+                },
+                ColorRule {
+                    op: "==".into(),
+                    v: 4,
+                    color: "white".into(),
+                },
+                ColorRule {
+                    op: "==".into(),
+                    v: 5,
+                    color: "white".into(),
+                },
+                ColorRule {
+                    op: "==".into(),
+                    v: 6,
+                    color: "red".into(),
+                },
             ];
         }
         // Relatives/standings: reuse `toggle` for the view mode (off = relative,
@@ -428,7 +474,11 @@ pub const ELEM_KINDS: &[(&str, &str)] = &[
 ];
 
 pub fn elem_kind_name(id: &str) -> &str {
-    ELEM_KINDS.iter().find(|e| e.0 == id).map(|e| e.1).unwrap_or(id)
+    ELEM_KINDS
+        .iter()
+        .find(|e| e.0 == id)
+        .map(|e| e.1)
+        .unwrap_or(id)
 }
 
 /// Seed a widget's editable element tree from its built-in. `stat` decomposes into
@@ -544,4 +594,3 @@ pub const GAME_PROCS: &[(&str, &str)] = &[
     ("rrre", "rrre"),
     ("projectmotorracing", "projectmotorracing"),
 ];
-

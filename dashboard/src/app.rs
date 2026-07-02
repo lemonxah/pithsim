@@ -176,7 +176,10 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
         build_cancel: Arc::new(AtomicBool::new(false)),
         build_pgid: Arc::new(AtomicI32::new(-1)),
         tray_active: Arc::new(AtomicBool::new(false)),
-        dev_out: Arc::new((Mutex::new(crate::ctx::DevOutbox::default()), std::sync::Condvar::new())),
+        dev_out: Arc::new((
+            Mutex::new(crate::ctx::DevOutbox::default()),
+            std::sync::Condvar::new(),
+        )),
         hb_out: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
     });
 

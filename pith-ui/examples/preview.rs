@@ -20,11 +20,34 @@ fn main() {
     let s = &loaded.screens[0];
     let t = demo_telem();
     let mut fb = Framebuffer::new(s.w, s.h);
-    render_screen(s, &t, 0, 0, &pith_ui::CarData::default(), &pith_ui::Relatives::default(), &mut fb);
+    render_screen(
+        s,
+        &t,
+        0,
+        0,
+        &pith_ui::CarData::default(),
+        &pith_ui::Relatives::default(),
+        &mut fb,
+    );
     let mut cache = RenderCache::new();
-    pith_ui::render_screen_diff(s, &t, 0, 0, &pith_ui::CarData::default(), &pith_ui::Relatives::default(), &mut cache, &mut fb); // prime the cache
+    pith_ui::render_screen_diff(
+        s,
+        &t,
+        0,
+        0,
+        &pith_ui::CarData::default(),
+        &pith_ui::Relatives::default(),
+        &mut cache,
+        &mut fb,
+    ); // prime the cache
 
-    image::save_buffer("preview.png", &fb.to_rgba8(), fb.w, fb.h, image::ExtendedColorType::Rgba8)
-        .expect("save preview.png");
+    image::save_buffer(
+        "preview.png",
+        &fb.to_rgba8(),
+        fb.w,
+        fb.h,
+        image::ExtendedColorType::Rgba8,
+    )
+    .expect("save preview.png");
     println!("rendered loaded doc -> preview.png ({}x{})", fb.w, fb.h);
 }
