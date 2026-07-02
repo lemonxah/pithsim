@@ -1,0 +1,34 @@
+# Pith sim-racing gear — one udev rules file for every device in the pithsim
+# monorepo. All devices enumerate under the Espressif VID 303a with a
+# Pith-allocated PID each (the table lives in pith-device/src/lib.rs):
+#   4002  Pith DDU        (XIAO ESP32-S3;   ROM bootloader PID 1001)
+#   8001  Pith Handbrake  (Lolin S2 Mini;   ROM bootloader PID 0002)
+# Future gear (e.g. active pedals): add its PID + bootloader PID below.
+#
+# Lets the pith-dashboard app open each device's HID command channel (report
+# id 2) without root, and lets esptool/espflash reflash in ROM download mode.
+#
+# Install:
+#   sudo cp dashboard/99-pith.rules /etc/udev/rules.d/99-pith.rules
+#   sudo udevadm control --reload-rules
+#   sudo udevadm trigger --action=add --subsystem-match=hidraw --subsystem-match=tty --subsystem-match=usb
+#   (or just re-plug the device)
+#
+# TAG+="uaccess" grants the logged-in desktop user an ACL (systemd-logind, the
+# Arch/CachyOS way). MODE="0666" is a hard fallback so it works regardless of
+# session/seat — it only opens up these specific device nodes.
+
+# ---- Pith DDU (303a:4002) ----
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4002", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4002", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4002", MODE="0660", TAG+="uaccess"
+# ROM download/bootloader mode (ESP32-S3) for esptool reflash
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="1001", MODE="0660", TAG+="uaccess"
+
+# ---- Pith Handbrake (303a:8001) ----
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="8001", MODE="0666", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="8001", MODE="0666", TAG+="uaccess"
+# ROM download/bootloader mode (ESP32-S2) for esptool/espflash reflash
+SUBSYSTEM=="tty", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="0002", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="0002", MODE="0660", TAG+="uaccess"

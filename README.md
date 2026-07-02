@@ -1,16 +1,26 @@
-# pithddu
+# pithsim
 
-The **Pith DDU** sim-racing dashboard — a single all-Rust monorepo for the device
-firmware, the desktop companion app, and the shared crates between them.
+**Pith** — an all-Rust monorepo of DIY sim-racing gear: device firmwares, ONE
+desktop app that controls all of them, and the shared crates between them.
+Current gear: the **Pith DDU** (dash display unit) and the **Pith Handbrake**;
+active pedals are next.
+
+Every device enumerates under USB VID `303a` with its own PID (the table lives
+in `pith-device/src/lib.rs`): `4002` DDU · `8001` Handbrake.
 
 ```
-pithddu/
-├─ dashboard/   Desktop companion app (Rust + Slint). Configure shift lights, touch
-│               buttons, the race-screen layout and per-car data; build/flash firmware;
-│               mirror live telemetry. → binary `pith-dashboard`
-├─ firmware/    ESP32-S3 (XIAO S3) firmware (Rust + esp-idf, embedded-graphics + mipidsi).
-│               → binary `pithddu`. Lives in the `ota_0`/`ota_1` slots. Its own esp
-│               toolchain + Xtensa target.
+pithsim/
+├─ dashboard/   THE desktop app (Rust + Slint) for every Pith device. DDU: configure
+│               shift lights, touch buttons, the race-screen layout and per-car data;
+│               build/flash firmware; mirror live telemetry. Handbrake: auto-calibration
+│               wizard + live monitor. → binary `pith-dashboard`
+├─ firmware/
+│  ├─ ddu/      ESP32-S3 (XIAO S3) firmware (Rust + esp-idf, embedded-graphics + mipidsi).
+│  │            → binary `pithddu`. Lives in the `ota_0`/`ota_1` slots. Its own esp
+│  │            sub-workspace (toolchain + Xtensa target).
+│  └─ handbrake/  ESP32-S2 (Lolin S2 Mini) + HX711 load-cell firmware (Rust + esp-idf).
+│               USB HID joystick: one 16-bit axis + the calibration command channel.
+│               → binary `pith-hb`. Its own esp sub-workspace.
 ├─ pith-recovery/  ESP32-S3 recovery app (Rust + esp-idf) flashed to the `factory`
 │               partition. Boots FIRST on every power-up: a touchscreen countdown
 │               ("N seconds till boot" — tap for recovery), then chain-loads the main
@@ -19,8 +29,14 @@ pithddu/
 ├─ pith-bios/   no_std UI crate for the recovery/boot screens (splash countdown +
 │               recovery menu), drawn with pith-ui's primitives so it matches every
 │               other screen. Shared by pith-recovery; the app owns all side-effects.
-├─ pith-core/   Shared, host-testable pure logic: telemetry parse, wire formatting,
-│               field registry (codegen from firmware/main/field_registry.json). no_std.
+├─ pith-core/   Shared, host-testable pure logic for the DDU: telemetry parse, wire
+│               formatting, field registry (codegen from firmware/ddu/main/
+│               field_registry.json). no_std.
+├─ pith-hb-core/  Shared calibration math + wire protocol for the handbrake
+│               (firmware + dashboard). Host-testable.
+├─ pith-device/ Host-side transport for ALL Pith gear: the HID command/log channel,
+│               serial fallback, DDU `Dash` (incl. @OTA upload) + `Handbrake` APIs,
+│               and the VID/PID table. Used by the dashboard and `pith-flash`.
 ├─ pith-sim/    Reusable telemetry sources: UDP game decoders (Forza/F1/AMS2/OutGauge),
 │               connector protocols (ACC/AC/GT7), shared-memory parsers (rF2-LMU/AC/R3E)
 │               + the /dev/shm reader. Bytes → a normalized pith-core Telemetry.
@@ -40,28 +56,33 @@ pithddu/
 
 ## Workspaces
 
-The host crates (`dashboard`, `pith-core`, `pith-ui`, `pith-bios`) form one Cargo
-workspace at the repo root. The **firmware and `pith-recovery` are each a separate
-sub-workspace** — they need the `esp` Rust toolchain and the `xtensa-esp32s3-espidf`
-target (`.cargo/config.toml`, `rust-toolchain.toml`), so they are **excluded** from
-the root workspace and path-depend on the shared crates (`../pith-core`, `../pith-bios`).
+The host crates (`dashboard`, `pith-core`, `pith-hb-core`, `pith-ui`, `pith-bios`,
+`pith-device`, …) form one Cargo workspace at the repo root. **Each firmware under
+`firmware/` and `pith-recovery` is a separate sub-workspace** — they need the `esp`
+Rust toolchain and their board's Xtensa target (`.cargo/config.toml`,
+`rust-toolchain.toml`), so they are **excluded** from the root workspace and
+path-depend on the shared crates (`../../pith-core`, `../../pith-hb-core`, …).
 
 ```sh
 # Host side (dashboard + shared crates) — stable toolchain
 cargo build --release -p pith-dashboard
 cargo test  -p pith-core
+cargo test  -p pith-hb-core
 cargo run   -p pith-dashboard --example ui_preview   # live pith-ui device preview
 
-# Firmware — esp toolchain (source ~/export-esp.sh first)
+# DDU firmware — esp toolchain (source ~/export-esp.sh first)
 cd firmware/ddu && cargo build --release
+
+# Handbrake firmware — same esp toolchain (xtensa-esp32s2)
+cd firmware/handbrake && cargo build --release
 
 # Recovery app — same esp toolchain, flashed to the factory partition
 cd pith-recovery && cargo build --release
 ```
 
 The single source of truth for bindable telemetry fields is
-`firmware/main/field_registry.json`; both `pith-core` and the dashboard generate their
-field registries from it at build time (`build.rs`).
+`firmware/ddu/main/field_registry.json`; both `pith-core` and the dashboard generate
+their field registries from it at build time (`build.rs`).
 
 ## Telemetry sources & coverage
 

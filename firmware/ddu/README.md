@@ -181,7 +181,7 @@ On **Linux** the app needs `hidraw` permission. Install the bundled udev rule
 (VID `303a` / PID `4002`):
 
 ```
-sudo cp tools/99-pithddu.rules /etc/udev/rules.d/99-pithddu.rules
+sudo cp dashboard/99-pith.rules /etc/udev/rules.d/99-pith.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger   # then re-plug
 ```
 
