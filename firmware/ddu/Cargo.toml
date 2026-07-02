@@ -16,8 +16,13 @@ path = "src/main.rs"
 # the monorepo root workspace. Shared crates are path-deps into the repo root.
 [workspace]
 
+# Release tuned for SPEED: the render/telemetry hot paths (pith-ui interpret +
+# embedded-graphics blit + $-frame parse) benefit measurably over "s", and the
+# 3 MB OTA slots leave plenty of headroom for the larger code.
 [profile.release]
-opt-level = "s"
+opt-level = 3
+lto = "thin"
+codegen-units = 1
 
 [profile.dev]
 debug = true

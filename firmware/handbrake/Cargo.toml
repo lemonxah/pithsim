@@ -16,8 +16,13 @@ path = "src/main.rs"
 # root workspace. The shared crate is a path-dep into the repo root.
 [workspace]
 
+# Release tuned for latency: the workload is tiny (HX711 at 10 SPS) but O2 +
+# LTO sharpens the USB callback/filter paths, and the 3 MB factory partition
+# has room to spare.
 [profile.release]
-opt-level = "s"
+opt-level = 2
+lto = "thin"
+codegen-units = 1
 
 [profile.dev]
 debug = true
