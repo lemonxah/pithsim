@@ -34,6 +34,9 @@ pub struct Ctx {
     pub build_pgid: Arc<std::sync::atomic::AtomicI32>,
     pub tray_active: Arc<AtomicBool>,
     pub dev_out: Arc<(Mutex<DevOutbox>, Condvar)>,
+    /// Latest-wins outbox for the handbrake device thread (see
+    /// [`crate::hb::HbOutbound`] for why a single slot, not a queue).
+    pub hb_out: Arc<(Mutex<Option<crate::hb::HbOutbound>>, Condvar)>,
 }
 
 impl Ctx {
@@ -55,6 +58,13 @@ impl Ctx {
     pub fn send_relatives(&self, line: &str) {
         let (m, cv) = &*self.dev_out;
         m.lock().unwrap().rel = Some(line.to_string());
+        cv.notify_one();
+    }
+
+    /// Queue a command for the handbrake device thread (latest wins).
+    pub fn send_hb(&self, cmd: crate::hb::HbOutbound) {
+        let (m, cv) = &*self.hb_out;
+        *m.lock().unwrap() = Some(cmd);
         cv.notify_one();
     }
 

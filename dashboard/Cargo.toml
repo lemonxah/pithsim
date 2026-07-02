@@ -21,6 +21,7 @@ pith-sim = { path = "../pith-sim" }
 pith-ui = { path = "../pith-ui", features = ["std"] }
 # Shared device transport (HID + serial + OTA) — also used by the pith-flash CLI.
 pith-device = { path = "../pith-device" }
+pith-hb-core = { path = "../pith-hb-core" }
 slint = { version = "1.17", default-features = false, features = ["backend-winit", "renderer-femtovg", "renderer-software", "accessibility", "compat-1-2", "std"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "process", "io-util", "fs"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }

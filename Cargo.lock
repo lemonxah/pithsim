@@ -3865,6 +3865,7 @@ dependencies = [
  "libc",
  "pith-core",
  "pith-device",
+ "pith-hb-core",
  "pith-sim",
  "pith-ui",
  "reqwest",

@@ -1,7 +1,7 @@
 // Shared structs, enums and global singletons. C++ owns the data and writes
 // these globals; the UI reads them and invokes callbacks for actions.
 
-export enum Page { overview, race, shift, cars, udp, firmware, device }
+export enum Page { overview, race, shift, cars, udp, firmware, device, handbrake }
 
 // ---- Telemetry (live device mirror) ----
 export struct TyreCell { temp: int, col: color }
@@ -505,4 +505,56 @@ export global DeviceLog {
     in property <int> count;        // total lines received
     callback clear();
     callback copy();                // copy the whole log to the clipboard
+}
+
+// ---- Handbrake (single-axis load-cell gear; its own device + connection) ----
+// The handbrake page runs a self-contained wizard: connect -> auto-calibrate ->
+// deadzone -> done, plus a live monitor. Rust's hb_device_loop owns the HID
+// handle and mirrors state here; the sub-page routing below is independent of
+// the app-level Page so the DDU pages are untouched by handbrake navigation.
+export enum HbPage { connect, auto-calibrate, deadzone, done, monitor }
+
+export global Hb {
+    in-out property <HbPage> page: HbPage.connect;
+    in property <bool> connected: false;
+    in property <string> conn-detail: "";
+    // Last command error (e.g. "span" when the learn window saw too little
+    // movement), shown inline by whichever sub-screen triggered it.
+    in property <string> error: "";
+
+    // Live device mirror: the calibration currently in effect on the firmware
+    // ("pending" — equal to the saved one except mid-wizard-edit) plus the
+    // latest raw/output sample. Refreshed from a `?` status reply after every
+    // command.
+    in property <int> raw: 0;
+    in property <int> pct-x10: 0;       // 0..1000, one implied decimal of percent
+    in property <int> idle-raw: 0;
+    in property <int> max-raw: 0;
+    in property <int> deadzone-lo: 2;   // %
+    in property <int> deadzone-hi: 2;   // %
+    in property <bool> inverted: false;
+    in property <bool> calibrated: false;
+    in property <string> board: "";
+    in property <string> fw-version: "";
+    in property <string> serial: "";
+    // Whether a handbrake is currently plugged in (HID presence check).
+    // Connecting is fully automatic once this goes true — no button.
+    in property <bool> device-found: false;
+
+    // Auto-calibration: no idle/max button presses — move the handbrake
+    // through its full range and the app learns the boundaries from the
+    // observed min/max over a timed window.
+    in property <bool> learn-active: false;
+    in property <int> learn-min: 0;
+    in property <int> learn-max: 0;
+    in property <int> learn-remaining-s: 0;
+    in property <float> learn-progress: 0; // 0..1, elapsed / total duration
+
+    callback auto-cal-start-requested();
+    callback auto-cal-cancel-requested();
+    callback set-deadzone(int, int);
+    callback set-inverted(bool);
+    callback save-requested();
+    callback cancel-requested();
+    callback reset-requested();
 }

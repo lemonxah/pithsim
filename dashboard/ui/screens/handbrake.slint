@@ -1,0 +1,308 @@
+// Handbrake page: a self-contained calibration wizard + live monitor for the
+// Pith Handbrake (its own USB device, independent of the DDU connection).
+// Sub-screens route on Hb.page: connect -> auto-calibrate -> deadzone -> done,
+// plus monitor. Ported from the standalone pith-hb dashboard.
+import { Theme } from "../theme.slint";
+import { Hb, HbPage } from "../models.slint";
+import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, ToggleSwitch, AppSlider, Dot } from "../widgets.slint";
+
+// A filled horizontal bar (0..1 fraction) with a label overlaid on top.
+// Shared by the auto-calibrate, deadzone-tuning and monitor sub-screens.
+component LiveBar inherits Rectangle {
+    in property <string> label: "";
+    in property <float> value: 0; // 0..1
+    in property <color> tint: Theme.accent;
+    height: 28px;
+    background: #000000;
+    border-radius: 6px;
+    clip: true;
+    Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width * Math.clamp(root.value, 0, 1);
+        height: parent.height;
+        background: root.tint;
+        animate width { duration: 60ms; }
+    }
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.label;
+            color: Theme.text;
+            font-family: Theme.display-font;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+component ConnectView inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 32px;
+        spacing: 20px;
+        alignment: center;
+
+        VerticalLayout {
+            spacing: 4px;
+            Text { text: "Pith Handbrake"; color: Theme.text; font-family: Theme.display-font; font-size: 28px; font-weight: 700; horizontal-alignment: center; }
+            Text { text: "Connect your handbrake over USB — it'll be picked up automatically."; color: Theme.text3; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 24px;
+                spacing: 10px;
+                alignment: center;
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 8px;
+                    VerticalLayout { alignment: center; Dot { tint: Hb.device-found ? Theme.accent : Theme.text3; } }
+                    Text {
+                        text: Hb.device-found ? "Handbrake detected — connecting…" : "Waiting for a handbrake…";
+                        color: Hb.device-found ? Theme.text : Theme.text3;
+                        font-size: 14px;
+                        vertical-alignment: center;
+                    }
+                }
+                if Hb.conn-detail != "": Text { text: Hb.conn-detail; color: Theme.text2; font-family: Theme.mono-font; font-size: 11px; horizontal-alignment: center; }
+            }
+        }
+    }
+}
+
+component AutoCalibrateView inherits Rectangle {
+    background: Theme.bg;
+
+    // Fires once when this view is created — i.e. every time the user lands
+    // here (fresh connect or "Recalibrate") — telling Rust to (re)start the
+    // timed learn window.
+    init => { Hb.auto-cal-start-requested(); }
+
+    VerticalLayout {
+        padding: 32px;
+        spacing: 20px;
+        alignment: start;
+
+        VerticalLayout {
+            spacing: 4px;
+            SectionLabel { text: "CALIBRATION"; }
+            Text {
+                text: "Move the handbrake through its full range";
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 26px;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "Release it fully, then pull it all the way — a few times over. It learns the boundaries from the movement, no buttons needed.";
+                color: Theme.text3;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 24px;
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        SectionLabel { text: "MIN SEEN"; }
+                        Mono { text: "\{Hb.learn-min}"; font-size: 22px; }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        SectionLabel { text: "LIVE"; }
+                        Mono { text: "\{Hb.raw}"; font-size: 22px; color: Theme.accent; }
+                    }
+                    VerticalLayout {
+                        spacing: 4px;
+                        horizontal-stretch: 1;
+                        SectionLabel { text: "MAX SEEN"; }
+                        Mono { text: "\{Hb.learn-max}"; font-size: 22px; }
+                    }
+                }
+                LiveBar {
+                    value: Hb.learn-progress;
+                    label: Hb.learn-active ? "\{Hb.learn-remaining-s}s remaining" : "finishing…";
+                }
+            }
+        }
+
+        if Hb.error != "": Text {
+            text: "Not enough movement detected (" + Hb.error + ") — keep moving it through the full range.";
+            color: Theme.red;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+
+        HorizontalLayout {
+            Rectangle { }
+            GhostButton { text: "CANCEL"; clicked => { Hb.auto-cal-cancel-requested(); } }
+        }
+    }
+}
+
+component DeadzoneView inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 32px;
+        spacing: 18px;
+        alignment: start;
+
+        VerticalLayout {
+            spacing: 4px;
+            SectionLabel { text: "STEP 3 OF 3 — DEADZONES"; }
+            Text { text: "Dial in the feel"; color: Theme.text; font-family: Theme.display-font; font-size: 26px; font-weight: 700; }
+            Text { text: "Pull the handbrake to preview. Deadzones trim noise near idle and let you reach full lock without crushing the lever."; color: Theme.text3; font-size: 13px; wrap: word-wrap; }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                SectionLabel { text: "LIVE OUTPUT"; }
+                LiveBar { value: Hb.pct-x10 / 1000.0; label: "\{Math.round(Hb.pct-x10 / 10)}%"; }
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 16px;
+                HorizontalLayout {
+                    Text { text: "Low deadzone"; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+                    Mono { text: "\{Hb.deadzone-lo}%"; font-size: 13px; vertical-alignment: center; }
+                }
+                AppSlider {
+                    minimum: 0;
+                    maximum: 40;
+                    value: Hb.deadzone-lo;
+                    changed(v) => { Hb.set-deadzone(Math.round(v), Hb.deadzone-hi); }
+                }
+                HorizontalLayout {
+                    Text { text: "High deadzone"; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+                    Mono { text: "\{Hb.deadzone-hi}%"; font-size: 13px; vertical-alignment: center; }
+                }
+                AppSlider {
+                    minimum: 0;
+                    maximum: 40;
+                    value: Hb.deadzone-hi;
+                    changed(v) => { Hb.set-deadzone(Hb.deadzone-lo, Math.round(v)); }
+                }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text { text: "Invert axis"; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+                    ToggleSwitch { on: Hb.inverted; toggled(v) => { Hb.set-inverted(v); } }
+                }
+            }
+        }
+
+        if Hb.error != "": Text { text: "Error: " + Hb.error; color: Theme.red; font-size: 12px; }
+
+        HorizontalLayout {
+            spacing: 12px;
+            GhostButton { text: "CANCEL"; clicked => { Hb.cancel-requested(); } }
+            Rectangle { }
+            PrimaryButton { text: "SAVE"; clicked => { Hb.save-requested(); } }
+        }
+    }
+}
+
+component DoneView inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 32px;
+        spacing: 20px;
+        alignment: center;
+
+        VerticalLayout {
+            spacing: 4px;
+            Text { text: "Calibration saved"; color: Theme.text; font-family: Theme.display-font; font-size: 26px; font-weight: 700; horizontal-alignment: center; }
+            Text { text: "Your handbrake is ready to use."; color: Theme.text3; font-size: 13px; horizontal-alignment: center; }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 6px;
+                Text { text: "idle \{Hb.idle-raw}   max \{Hb.max-raw}"; color: Theme.text2; font-family: Theme.mono-font; font-size: 13px; horizontal-alignment: center; }
+                Text { text: "deadzone \{Hb.deadzone-lo}% / \{Hb.deadzone-hi}%   " + (Hb.inverted ? "inverted" : "normal"); color: Theme.text2; font-family: Theme.mono-font; font-size: 13px; horizontal-alignment: center; }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: center;
+            GhostButton { text: "RECALIBRATE"; clicked => { Hb.page = HbPage.auto-calibrate; } }
+            PrimaryButton { text: "GO TO MONITOR"; clicked => { Hb.page = HbPage.monitor; } }
+        }
+    }
+}
+
+component MonitorView inherits Rectangle {
+    background: Theme.bg;
+    VerticalLayout {
+        padding: 32px;
+        spacing: 18px;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: 8px;
+            VerticalLayout { alignment: center; Dot { tint: Hb.connected ? Theme.green : Theme.text3; } }
+            VerticalLayout {
+                spacing: 2px;
+                Text { text: "Pith Handbrake"; color: Theme.text; font-family: Theme.display-font; font-size: 22px; font-weight: 700; }
+                Text { text: "\{Hb.board} — fw \{Hb.fw-version} — \{Hb.serial}"; color: Theme.text3; font-family: Theme.mono-font; font-size: 11px; }
+            }
+        }
+
+        Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                SectionLabel { text: "LIVE OUTPUT"; }
+                LiveBar { value: Hb.pct-x10 / 1000.0; label: "\{Math.round(Hb.pct-x10 / 10)}%"; }
+                Text { text: "raw \{Hb.raw}"; color: Theme.text3; font-family: Theme.mono-font; font-size: 11px; }
+            }
+        }
+
+        if Hb.calibrated: Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 6px;
+                SectionLabel { text: "SAVED CALIBRATION"; }
+                Text { text: "idle \{Hb.idle-raw}   max \{Hb.max-raw}"; color: Theme.text2; font-family: Theme.mono-font; font-size: 12px; }
+                Text { text: "deadzone \{Hb.deadzone-lo}% / \{Hb.deadzone-hi}%   " + (Hb.inverted ? "inverted" : "normal"); color: Theme.text2; font-family: Theme.mono-font; font-size: 12px; }
+            }
+        }
+        if !Hb.calibrated: Text { text: "Not calibrated yet."; color: Theme.amber; font-size: 13px; }
+
+        Rectangle { }
+
+        HorizontalLayout {
+            spacing: 12px;
+            GhostButton { text: "RESET CALIBRATION"; clicked => { Hb.reset-requested(); } }
+            Rectangle { }
+            PrimaryButton { text: "RECALIBRATE"; clicked => { Hb.page = HbPage.auto-calibrate; } }
+        }
+    }
+}
+
+export component HandbrakeScreen inherits Rectangle {
+    background: Theme.bg;
+    if Hb.page == HbPage.connect: ConnectView { }
+    if Hb.page == HbPage.auto-calibrate: AutoCalibrateView { }
+    if Hb.page == HbPage.deadzone: DeadzoneView { }
+    if Hb.page == HbPage.done: DoneView { }
+    if Hb.page == HbPage.monitor: MonitorView { }
+}

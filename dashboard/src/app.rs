@@ -177,6 +177,7 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
         build_pgid: Arc::new(AtomicI32::new(-1)),
         tray_active: Arc::new(AtomicBool::new(false)),
         dev_out: Arc::new((Mutex::new(crate::ctx::DevOutbox::default()), std::sync::Condvar::new())),
+        hb_out: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
     });
 
     {
@@ -203,6 +204,7 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
     }
 
     crate::callbacks::wire_callbacks(ui, &ctx);
+    crate::hb::wire_hb_callbacks(ui, &ctx);
 
     // Screenshot/headless mode stops here: no network, no background loops.
     if !live {
@@ -221,6 +223,12 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
     rt.spawn_blocking({
         let c = ctx.clone();
         move || crate::loops::device_loop(c)
+    });
+    // The handbrake is its own USB device with its own connection lifecycle —
+    // a dedicated thread owns its HID handle (never shared with the DDU's).
+    rt.spawn_blocking({
+        let c = ctx.clone();
+        move || crate::hb::hb_device_loop(c)
     });
     // Dedicated writer for the fire-and-forget device streams (telemetry +
     // relatives) — a wedged HID link stalls only this thread, not ingestion.

@@ -11,6 +11,7 @@ mod ctx;
 use pith_device as device;
 mod firmware;
 mod games;
+mod hb;
 mod loops;
 mod net;
 mod paths;
