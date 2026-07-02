@@ -13,8 +13,7 @@ use crate::ui_bridge::sstr;
 use crate::Firmware;
 
 fn parse_ninja(l: &str) -> Option<f32> {
-    if l.starts_with('[') {
-        let inner = &l[1..];
+    if let Some(inner) = l.strip_prefix('[') {
         if let Some(slash) = inner.find('/') {
             let a: i32 = inner[..slash].trim().parse().ok()?;
             let rest = &inner[slash + 1..];

@@ -13,18 +13,10 @@ pub struct PortInfo {
     pub is_esp: bool,
 }
 
+#[derive(Default)]
 pub struct Serial {
     port: Option<Box<dyn serialport::SerialPort>>,
     line_buf: Vec<u8>,
-}
-
-impl Default for Serial {
-    fn default() -> Self {
-        Serial {
-            port: None,
-            line_buf: Vec::new(),
-        }
-    }
 }
 
 #[cfg(target_os = "linux")]
@@ -70,7 +62,7 @@ impl Serial {
             if vid == "303a" && pid == "4002" {
                 let is_data = iface.contains("Data");
                 let is_cmd = iface.contains("Command");
-                pi.is_dash = is_cmd || (!is_data && !is_cmd);
+                pi.is_dash = is_cmd || !is_data;
                 let role = if is_cmd {
                     "Command"
                 } else if is_data {

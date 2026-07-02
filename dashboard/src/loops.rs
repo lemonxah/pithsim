@@ -438,6 +438,7 @@ fn push_udp_status(ctx: &Arc<Ctx>, bound: Option<u16>, packets: u64, pps: i32, _
 ///     the full field set still flows;
 ///   * native game telemetry (binary), run through the decoder registry
 ///     (Forza Horizon 6 first) → a `$`-frame → the same device/preview path.
+///
 /// The bind port is live-reconfigurable from the Telemetry-UDP page.
 pub fn udp_listener_loop(ctx: Arc<Ctx>) {
     use std::net::UdpSocket;
@@ -610,7 +611,7 @@ pub fn device_loop(ctx: Arc<Ctx>) {
     while ctx.running.load(Ordering::SeqCst) {
         // Re-scan for a locally built firmware image every ~2s so a bin built from
         // the terminal (just image) lights up the "FLASH LOCAL BUILD" button live.
-        if fw_tick % 12 == 0 {
+        if fw_tick.is_multiple_of(12) {
             let c2 = ctx.clone();
             ctx.ui_run(move |u| {
                 let s = c2.lock();
@@ -677,7 +678,7 @@ pub fn device_loop(ctx: Arc<Ctx>) {
             let feeding = ctx
                 .lock()
                 .last_sim_frame
-                .map_or(false, |t| t.elapsed() < Duration::from_millis(1500));
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(1500));
             // When the plugin feeds us, the sim_listener already drives the overview
             // (~12 Hz) AND pushes to the device — so here we just skip the @T poll.
             // Only poll @T for telemetry when there's no plugin feeding the app.
@@ -729,7 +730,7 @@ pub fn game_loop(ctx: Arc<Ctx>) {
                     // Wine) wipe the detected game/car SimHub provided.
                     let feeding = s
                         .last_sim_frame
-                        .map_or(false, |t| t.elapsed() < std::time::Duration::from_millis(3000));
+                        .is_some_and(|t| t.elapsed() < std::time::Duration::from_millis(3000));
                     if gi < 0 && feeding {
                         return;
                     }
@@ -1328,7 +1329,7 @@ pub fn gt7_connector_loop(ctx: Arc<Ctx>) {
                 }
                 pkts += 1;
                 // GT7 stops after ~100 packets unless re-fed; resend the heartbeat.
-                if pkts % 100 == 0 {
+                if pkts.is_multiple_of(100) {
                     let _ = sock.send_to(gt7::HEARTBEAT, (host.as_str(), gt7::SEND_PORT));
                 }
             } else if last_rx.elapsed() > Duration::from_secs(2) {

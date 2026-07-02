@@ -59,6 +59,9 @@ pub const PAL_NAMES: [&str; 10] = [
 
 impl Fmt {
     /// Parse a format token; defaults to `Int` (matches `fmtc_fmt_from_str`).
+    // Not the std FromStr trait: infallible by design (unknown input maps
+    // to a sensible default so a hand-edited UiDoc never fails to load).
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Fmt {
         match s {
             "fixed1" => Fmt::Fixed1,
@@ -77,6 +80,9 @@ impl Fmt {
 
 impl RuleOp {
     /// Parse an op token; defaults to `Gt` (matches `fmtc_op_from_str`).
+    // Not the std FromStr trait: infallible by design (unknown input maps
+    // to a sensible default so a hand-edited UiDoc never fails to load).
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> RuleOp {
         match s {
             "<" => RuleOp::Lt,
@@ -104,6 +110,9 @@ impl RuleOp {
 
 impl Pal {
     /// Parse a palette token; defaults to `White` (matches `fmtc_pal_from_str`).
+    // Not the std FromStr trait: infallible by design (unknown input maps
+    // to a sensible default so a hand-edited UiDoc never fails to load).
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Pal {
         match s {
             "bg" => Pal::Bg,

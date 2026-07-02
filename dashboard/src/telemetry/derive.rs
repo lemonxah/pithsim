@@ -41,6 +41,7 @@ impl Provided {
 }
 
 /// All derived-field trackers, run in order each frame.
+#[derive(Default)]
 pub struct Derived {
     best: BestLap,
     fuel: Fuel,
@@ -48,11 +49,6 @@ pub struct Derived {
     delta: Delta,
 }
 
-impl Default for Derived {
-    fn default() -> Self {
-        Self { best: BestLap::default(), fuel: Fuel::default(), ve: Ve::default(), delta: Delta::default() }
-    }
-}
 
 impl Derived {
     /// Fill computed fields. `provided` says which fields a live source already

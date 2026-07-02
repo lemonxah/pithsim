@@ -11,6 +11,11 @@
 //! to the device. [`render_screen_diff`] does **dirty-rect** redraws — only the nodes
 //! whose telemetry changed repaint, so the device only pushes changed pixels over SPI.
 
+// Render primitives intentionally take flat geometry + palette + doc context
+// (mirrors the firmware's C-style draw calls); grouping into structs would
+// churn both sides for no runtime win.
+#![allow(clippy::too_many_arguments)]
+
 extern crate alloc;
 
 use alloc::string::{String, ToString};
@@ -329,11 +334,9 @@ pub fn builtin(
 
 // ============ render primitives (ported from firmware ui.rs) ============
 
-#[allow(clippy::too_many_arguments)]
 /// Shared text primitive: pick a u8g2 font by requested pixel height and render
 /// `s` aligned at (x,y). Public so sibling crates (pith-bios) draw with the same
 /// fonts as the rest of the UI.
-#[allow(clippy::too_many_arguments)]
 pub fn text<D: DrawTarget<Color = Rgb565>>(
     d: &mut D,
     s: &str,
@@ -609,7 +612,7 @@ fn paint_tyre_panel<D: DrawTarget<Color = Rgb565>>(p: &mut Painter<D>, r: &Rect,
                 2 => (format::format(wear[i], Fmt::Int, 1, "%"), wear[i]),
                 _ => (String::from(tyre_compound(comp[i])), comp[i]),
             };
-            let ry = sy + ri as i32 * lh + lh / 2;
+            let ry = sy + ri * lh + lh / 2;
             let vx0 = px + cw * 2 / 5;
             let vx1 = px + cw - 6;
             p.cell((vx0, ry - lh / 2, vx1, ry + lh / 2 - 1), raw as u64, move |d| {
@@ -718,11 +721,11 @@ fn draw_kind<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, kind: &Kind, t:
             // NA (no reading, e.g. uninitialised wheel) renders dim "--".
             let temps = [t.tt_avg_fl, t.tt_avg_fr, t.tt_avg_rl, t.tt_avg_rr];
             let (bw, bh) = (w / 2, h / 2);
-            for i in 0..4 {
+            for (i, &tv) in temps.iter().enumerate() {
                 let (cxx, cyy) = (x + (i as i32 % 2) * bw, y + (i as i32 / 2) * bh);
-                let col = if temps[i] == format::NA { pal(Pal::Dim) } else if temps[i] > 950 { pal(Pal::Red) } else if temps[i] > 800 { pal(Pal::Amber) } else { pal(Pal::Green) };
+                let col = if tv == format::NA { pal(Pal::Dim) } else if tv > 950 { pal(Pal::Red) } else if tv > 800 { pal(Pal::Amber) } else { pal(Pal::Green) };
                 fill_round(d, cxx + 2, cyy + 2, bw - 4, bh - 4, 4, pal(Pal::Panel));
-                let s = format::format(temps[i], Fmt::Fixed1, 10, "°C");
+                let s = format::format(tv, Fmt::Fixed1, 10, "°C");
                 text(d, &s, cxx + bw / 2, cyy + bh / 2, 13, col, HorizontalAlignment::Center, VerticalPosition::Center);
             }
         }
@@ -1433,7 +1436,7 @@ pub const TAB_STRIP_H: i32 = 40;
 /// Which tab a tap at (tx,ty) lands on, if it's in the strip of an `n`-tab screen
 /// of width `w`. None if the tap is below the strip (i.e. in the page body).
 pub fn tab_at(w: u32, n: usize, tx: i32, ty: i32) -> Option<u8> {
-    if n == 0 || ty < 0 || ty >= TAB_STRIP_H || tx < 0 || tx >= w as i32 {
+    if n == 0 || !(0..TAB_STRIP_H).contains(&ty) || tx < 0 || tx >= w as i32 {
         return None;
     }
     let tw = (w as i32 / n as i32).max(1);

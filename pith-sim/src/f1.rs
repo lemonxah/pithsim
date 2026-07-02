@@ -24,6 +24,7 @@
 //!   * Max cars per packet: 22 → 24.
 //!   * `LapData` stayed 57 bytes with the fields we read at the same offsets
 //!     (confirmed unchanged) — no branch needed there.
+//!
 //! Car index 0 always lands at the same byte regardless of which stride is
 //! used, which is why this only bites once the player's OWN car is above
 //! index 0 — every field looks "randomly" wrong from a shifted read.

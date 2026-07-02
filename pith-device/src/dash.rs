@@ -179,11 +179,9 @@ impl Dash {
                 return false;
             }
             sent = end;
-            if sent < img.len() {
-                if !self.ota_wait("K", 6000) {
-                    self.logln(&format!("OTA: no ack at {sent}"));
-                    return false;
-                }
+            if sent < img.len() && !self.ota_wait("K", 6000) {
+                self.logln(&format!("OTA: no ack at {sent}"));
+                return false;
             }
             on_progress((sent * 100 / img.len()) as i32);
         }

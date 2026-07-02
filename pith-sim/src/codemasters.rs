@@ -34,7 +34,7 @@ impl GameDecoder for CodemastersDecoder {
         // masquerade: speed and rpm must be finite and in a plausible range.
         let speed_ms = fi(b, 7);
         let rpm10 = fi(b, 37);
-        if !speed_ms.is_finite() || !rpm10.is_finite() || speed_ms < 0.0 || speed_ms > 200.0 {
+        if !speed_ms.is_finite() || !rpm10.is_finite() || !(0.0..=200.0).contains(&speed_ms) {
             return None;
         }
 
@@ -50,7 +50,7 @@ impl GameDecoder for CodemastersDecoder {
         // Gear: official 0=N, 1..n forward, 10=reverse; some titles use <0 for
         // reverse. Be defensive about both.
         let gf = fi(b, 33);
-        let gear = if gf < 0.0 || gf >= 9.5 {
+        let gear = if !(0.0..9.5).contains(&gf) {
             -1
         } else if gf < 0.5 {
             0

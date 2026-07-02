@@ -42,9 +42,9 @@ fn c_atof(s: &str) -> f32 {
     let mut seen_e = false;
     while end < b.len() {
         let c = b[end];
-        if c.is_ascii_digit() {
-            end += 1;
-        } else if (c == b'-' || c == b'+') && (end == 0 || b[end - 1] == b'e' || b[end - 1] == b'E')
+        if c.is_ascii_digit()
+            || ((c == b'-' || c == b'+')
+                && (end == 0 || b[end - 1] == b'e' || b[end - 1] == b'E'))
         {
             end += 1;
         } else if c == b'.' && !seen_dot && !seen_e {

@@ -248,8 +248,8 @@ impl<'a> Cur<'a> {
         let mut splits = [0i32; 3];
         for k in 0..n {
             let s = self.i32()?;
-            if k < 3 {
-                splits[k] = if s == INVALID_LAP { 0 } else { s };
+            if let Some(slot) = splits.get_mut(k) {
+                *slot = if s == INVALID_LAP { 0 } else { s };
             }
         }
         self.skip(4)?; // isInvalid, isValidForBest, isOutLap, isInLap

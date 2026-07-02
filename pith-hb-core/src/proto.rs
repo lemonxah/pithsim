@@ -133,10 +133,9 @@ pub fn parse_reply_line(line: &str) -> Option<Reply> {
     let line = line.trim();
     if let Some(rest) = line.strip_prefix("OK") {
         Some(Reply::Ok(rest.trim().to_string()))
-    } else if let Some(rest) = line.strip_prefix("ERR") {
-        Some(Reply::Err(rest.trim().to_string()))
     } else {
-        None
+        line.strip_prefix("ERR")
+            .map(|rest| Reply::Err(rest.trim().to_string()))
     }
 }
 

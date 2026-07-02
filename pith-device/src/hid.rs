@@ -13,24 +13,13 @@ pub fn device_present(vid: u16, pid: u16) -> bool {
     found
 }
 
+#[derive(Default)]
 pub struct Hid {
     api: Option<HidApi>,
     dev: Option<HidDevice>,
     rx: Vec<u8>,         // report id 2 — command-reply bytes
     log_acc: Vec<u8>,    // report id 3 — partial device-log line
     logs: Vec<String>,   // complete device-log lines awaiting the UI
-}
-
-impl Default for Hid {
-    fn default() -> Self {
-        Hid {
-            api: None,
-            dev: None,
-            rx: Vec::new(),
-            log_acc: Vec::new(),
-            logs: Vec::new(),
-        }
-    }
 }
 
 impl Hid {
@@ -144,10 +133,10 @@ impl Hid {
                 Some(d) => d.read_timeout(&mut buf, 0).unwrap_or(0),
                 None => break,
             };
-            if r <= 0 {
+            if r == 0 {
                 break;
             }
-            self.route(&buf, r as usize);
+            self.route(&buf, r);
         }
         self.rx.clear();
     }
@@ -173,7 +162,7 @@ impl Hid {
                 None => return String::new(),
             };
             if r > 0 {
-                self.route(&buf, r as usize);
+                self.route(&buf, r);
             }
             if Instant::now() >= deadline && !self.rx.contains(&b'\n') {
                 return String::new();

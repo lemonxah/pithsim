@@ -348,12 +348,14 @@ pub fn parse_line(line: &str) -> Option<Telemetry> {
     i += 1; // consume '$'
     let mut c = Cur { b, i };
 
-    let mut t = Telemetry::default();
     // Default tyre wear to "full" so an absent field doesn't read as worn out.
-    t.tw_fl = 100;
-    t.tw_fr = 100;
-    t.tw_rl = 100;
-    t.tw_rr = 100;
+    let mut t = Telemetry {
+        tw_fl: 100,
+        tw_fr: 100,
+        tw_rl: 100,
+        tw_rr: 100,
+        ..Telemetry::default()
+    };
 
     // ---- Required core fields ----
     // Gear may arrive as a letter (N/R/1..9) or numeric (0 = neutral, -1 =
@@ -368,10 +370,7 @@ pub fn parse_line(line: &str) -> Option<Telemetry> {
     } else if g == b'0' {
         t.gear = b'N';
         c.i += 1;
-    } else if g == b'R' || g == b'N' {
-        t.gear = g;
-        c.i += 1;
-    } else if (b'1'..=b'9').contains(&g) {
+    } else if g == b'R' || g == b'N' || (b'1'..=b'9').contains(&g) {
         t.gear = g;
         c.i += 1;
     } else {
@@ -402,95 +401,94 @@ pub fn parse_line(line: &str) -> Option<Telemetry> {
 
     // ---- Optional extended fields, in fixed order ----
     // Stops at the first absent separator; remaining fields keep defaults.
-    loop {
-        if !c.opt_field(&mut t.shift_rpm) { break; }
-        if !c.opt_field(&mut t.cur_lap_ms) { break; }
-        if !c.opt_field(&mut t.last_lap_ms) { break; }
-        if !c.opt_field(&mut t.best_lap_ms) { break; }
-        if !c.opt_field(&mut t.pb_lap_ms) { break; }
-        if !c.opt_field(&mut t.est_lap_ms) { break; }
-        if !c.opt_field(&mut t.delta_ms) { break; }
-        if !c.opt_field(&mut t.position) { break; }
-        if !c.opt_field(&mut t.field_size) { break; }
-        if !c.opt_field(&mut t.laps_done) { break; }
-        if !c.opt_field(&mut t.total_laps) { break; }
-        if !c.opt_field(&mut t.laps_left) { break; }
-        if !c.opt_field(&mut t.water_c) { break; }
-        if !c.opt_field(&mut t.oil_c) { break; }
-        if !c.opt_field(&mut t.oil_press_x10) { break; }
-        if !c.opt_field(&mut t.boost_kpa) { break; }
-        if !c.opt_field(&mut t.tc) { break; }
-        if !c.opt_field(&mut t.abs) { break; }
-        if !c.opt_field(&mut t.brake_bias_x10) { break; }
-        if !c.opt_field(&mut t.fuel_dl) { break; }
-        if !c.opt_field(&mut t.fuel_cap_dl) { break; }
-        if !c.opt_field(&mut t.fuel_per_lap_ml) { break; }
-        if !c.opt_field(&mut t.fuel_laps_x10) { break; }
-        if !c.opt_field(&mut t.tt_fl_i) { break; }
-        if !c.opt_field(&mut t.tt_fl_m) { break; }
-        if !c.opt_field(&mut t.tt_fl_o) { break; }
-        if !c.opt_field(&mut t.tt_fr_i) { break; }
-        if !c.opt_field(&mut t.tt_fr_m) { break; }
-        if !c.opt_field(&mut t.tt_fr_o) { break; }
-        if !c.opt_field(&mut t.tt_rl_i) { break; }
-        if !c.opt_field(&mut t.tt_rl_m) { break; }
-        if !c.opt_field(&mut t.tt_rl_o) { break; }
-        if !c.opt_field(&mut t.tt_rr_i) { break; }
-        if !c.opt_field(&mut t.tt_rr_m) { break; }
-        if !c.opt_field(&mut t.tt_rr_o) { break; }
-        if !c.opt_field(&mut t.tp_fl) { break; }
-        if !c.opt_field(&mut t.tp_fr) { break; }
-        if !c.opt_field(&mut t.tp_rl) { break; }
-        if !c.opt_field(&mut t.tp_rr) { break; }
-        if !c.opt_field(&mut t.tw_fl) { break; }
-        if !c.opt_field(&mut t.tw_fr) { break; }
-        if !c.opt_field(&mut t.tw_rl) { break; }
-        if !c.opt_field(&mut t.tw_rr) { break; }
-        if !c.opt_field(&mut t.bt_fl) { break; }
-        if !c.opt_field(&mut t.bt_fr) { break; }
-        if !c.opt_field(&mut t.bt_rl) { break; }
-        if !c.opt_field(&mut t.bt_rr) { break; }
-        if !c.opt_field(&mut t.throttle) { break; }
-        if !c.opt_field(&mut t.brake) { break; }
-        if !c.opt_field(&mut t.clutch) { break; }
-        if !c.opt_field(&mut t.steer) { break; }
-        if !c.opt_field(&mut t.tc_active) { break; }
-        if !c.opt_field(&mut t.abs_active) { break; }
-        if !c.opt_field(&mut t.headlights) { break; }
-        if !c.opt_field(&mut t.wipers) { break; }
-        if !c.opt_field(&mut t.pit_limiter) { break; }
-        if !c.opt_field(&mut t.ignition) { break; }
-        if !c.opt_field(&mut t.flag) { break; }
-        if !c.opt_field(&mut t.track_pct) { break; }
-        if !c.opt_field(&mut t.pos_x) { break; }
-        if !c.opt_field(&mut t.pos_z) { break; }
-        if !c.opt_field(&mut t.s1_ms) { break; }
-        if !c.opt_field(&mut t.s2_ms) { break; }
-        if !c.opt_field(&mut t.s3_ms) { break; }
-        if !c.opt_field(&mut t.bs1_ms) { break; }
-        if !c.opt_field(&mut t.bs2_ms) { break; }
-        if !c.opt_field(&mut t.bs3_ms) { break; }
-        if !c.opt_field(&mut t.battery_pct) { break; }
-        if !c.opt_field(&mut t.ers_state) { break; }
+    'fields: {
+        if !c.opt_field(&mut t.shift_rpm) { break 'fields; }
+        if !c.opt_field(&mut t.cur_lap_ms) { break 'fields; }
+        if !c.opt_field(&mut t.last_lap_ms) { break 'fields; }
+        if !c.opt_field(&mut t.best_lap_ms) { break 'fields; }
+        if !c.opt_field(&mut t.pb_lap_ms) { break 'fields; }
+        if !c.opt_field(&mut t.est_lap_ms) { break 'fields; }
+        if !c.opt_field(&mut t.delta_ms) { break 'fields; }
+        if !c.opt_field(&mut t.position) { break 'fields; }
+        if !c.opt_field(&mut t.field_size) { break 'fields; }
+        if !c.opt_field(&mut t.laps_done) { break 'fields; }
+        if !c.opt_field(&mut t.total_laps) { break 'fields; }
+        if !c.opt_field(&mut t.laps_left) { break 'fields; }
+        if !c.opt_field(&mut t.water_c) { break 'fields; }
+        if !c.opt_field(&mut t.oil_c) { break 'fields; }
+        if !c.opt_field(&mut t.oil_press_x10) { break 'fields; }
+        if !c.opt_field(&mut t.boost_kpa) { break 'fields; }
+        if !c.opt_field(&mut t.tc) { break 'fields; }
+        if !c.opt_field(&mut t.abs) { break 'fields; }
+        if !c.opt_field(&mut t.brake_bias_x10) { break 'fields; }
+        if !c.opt_field(&mut t.fuel_dl) { break 'fields; }
+        if !c.opt_field(&mut t.fuel_cap_dl) { break 'fields; }
+        if !c.opt_field(&mut t.fuel_per_lap_ml) { break 'fields; }
+        if !c.opt_field(&mut t.fuel_laps_x10) { break 'fields; }
+        if !c.opt_field(&mut t.tt_fl_i) { break 'fields; }
+        if !c.opt_field(&mut t.tt_fl_m) { break 'fields; }
+        if !c.opt_field(&mut t.tt_fl_o) { break 'fields; }
+        if !c.opt_field(&mut t.tt_fr_i) { break 'fields; }
+        if !c.opt_field(&mut t.tt_fr_m) { break 'fields; }
+        if !c.opt_field(&mut t.tt_fr_o) { break 'fields; }
+        if !c.opt_field(&mut t.tt_rl_i) { break 'fields; }
+        if !c.opt_field(&mut t.tt_rl_m) { break 'fields; }
+        if !c.opt_field(&mut t.tt_rl_o) { break 'fields; }
+        if !c.opt_field(&mut t.tt_rr_i) { break 'fields; }
+        if !c.opt_field(&mut t.tt_rr_m) { break 'fields; }
+        if !c.opt_field(&mut t.tt_rr_o) { break 'fields; }
+        if !c.opt_field(&mut t.tp_fl) { break 'fields; }
+        if !c.opt_field(&mut t.tp_fr) { break 'fields; }
+        if !c.opt_field(&mut t.tp_rl) { break 'fields; }
+        if !c.opt_field(&mut t.tp_rr) { break 'fields; }
+        if !c.opt_field(&mut t.tw_fl) { break 'fields; }
+        if !c.opt_field(&mut t.tw_fr) { break 'fields; }
+        if !c.opt_field(&mut t.tw_rl) { break 'fields; }
+        if !c.opt_field(&mut t.tw_rr) { break 'fields; }
+        if !c.opt_field(&mut t.bt_fl) { break 'fields; }
+        if !c.opt_field(&mut t.bt_fr) { break 'fields; }
+        if !c.opt_field(&mut t.bt_rl) { break 'fields; }
+        if !c.opt_field(&mut t.bt_rr) { break 'fields; }
+        if !c.opt_field(&mut t.throttle) { break 'fields; }
+        if !c.opt_field(&mut t.brake) { break 'fields; }
+        if !c.opt_field(&mut t.clutch) { break 'fields; }
+        if !c.opt_field(&mut t.steer) { break 'fields; }
+        if !c.opt_field(&mut t.tc_active) { break 'fields; }
+        if !c.opt_field(&mut t.abs_active) { break 'fields; }
+        if !c.opt_field(&mut t.headlights) { break 'fields; }
+        if !c.opt_field(&mut t.wipers) { break 'fields; }
+        if !c.opt_field(&mut t.pit_limiter) { break 'fields; }
+        if !c.opt_field(&mut t.ignition) { break 'fields; }
+        if !c.opt_field(&mut t.flag) { break 'fields; }
+        if !c.opt_field(&mut t.track_pct) { break 'fields; }
+        if !c.opt_field(&mut t.pos_x) { break 'fields; }
+        if !c.opt_field(&mut t.pos_z) { break 'fields; }
+        if !c.opt_field(&mut t.s1_ms) { break 'fields; }
+        if !c.opt_field(&mut t.s2_ms) { break 'fields; }
+        if !c.opt_field(&mut t.s3_ms) { break 'fields; }
+        if !c.opt_field(&mut t.bs1_ms) { break 'fields; }
+        if !c.opt_field(&mut t.bs2_ms) { break 'fields; }
+        if !c.opt_field(&mut t.bs3_ms) { break 'fields; }
+        if !c.opt_field(&mut t.battery_pct) { break 'fields; }
+        if !c.opt_field(&mut t.ers_state) { break 'fields; }
         // Tyre surface average (×4) then carcass core (×4) — same order as to_frame.
-        if !c.opt_field(&mut t.tt_avg_fl) { break; }
-        if !c.opt_field(&mut t.tt_avg_fr) { break; }
-        if !c.opt_field(&mut t.tt_avg_rl) { break; }
-        if !c.opt_field(&mut t.tt_avg_rr) { break; }
-        if !c.opt_field(&mut t.tt_carc_fl) { break; }
-        if !c.opt_field(&mut t.tt_carc_fr) { break; }
-        if !c.opt_field(&mut t.tt_carc_rl) { break; }
-        if !c.opt_field(&mut t.tt_carc_rr) { break; }
-        if !c.opt_field(&mut t.comp_fl) { break; }
-        if !c.opt_field(&mut t.comp_fr) { break; }
-        if !c.opt_field(&mut t.comp_rl) { break; }
-        if !c.opt_field(&mut t.comp_rr) { break; }
-        if !c.opt_field(&mut t.tc_slip) { break; }
-        if !c.opt_field(&mut t.tc_cut) { break; }
-        if !c.opt_field(&mut t.virtual_energy) { break; }
-        if !c.opt_field(&mut t.ve_per_lap) { break; }
-        if !c.opt_field(&mut t.fuel_is_ve) { break; }
-        break;
+        if !c.opt_field(&mut t.tt_avg_fl) { break 'fields; }
+        if !c.opt_field(&mut t.tt_avg_fr) { break 'fields; }
+        if !c.opt_field(&mut t.tt_avg_rl) { break 'fields; }
+        if !c.opt_field(&mut t.tt_avg_rr) { break 'fields; }
+        if !c.opt_field(&mut t.tt_carc_fl) { break 'fields; }
+        if !c.opt_field(&mut t.tt_carc_fr) { break 'fields; }
+        if !c.opt_field(&mut t.tt_carc_rl) { break 'fields; }
+        if !c.opt_field(&mut t.tt_carc_rr) { break 'fields; }
+        if !c.opt_field(&mut t.comp_fl) { break 'fields; }
+        if !c.opt_field(&mut t.comp_fr) { break 'fields; }
+        if !c.opt_field(&mut t.comp_rl) { break 'fields; }
+        if !c.opt_field(&mut t.comp_rr) { break 'fields; }
+        if !c.opt_field(&mut t.tc_slip) { break 'fields; }
+        if !c.opt_field(&mut t.tc_cut) { break 'fields; }
+        if !c.opt_field(&mut t.virtual_energy) { break 'fields; }
+        if !c.opt_field(&mut t.ve_per_lap) { break 'fields; }
+        if !c.opt_field(&mut t.fuel_is_ve) { break 'fields; }
     }
 
     // Trailing characters must only be separators / terminators / whitespace.

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use slint::{Color, SharedString};
 
-use crate::catalog::{default_els, default_spec, PINDEFS, PIN_N};
+use crate::catalog::{default_els, default_spec, PINDEFS};
 use crate::clipboard::copy_to_clipboard;
 use crate::ctx::Ctx;
 use crate::persist::*;
@@ -1509,9 +1509,9 @@ pub fn wire_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
                     }
                     p[opt_idx as usize].gpio
                 };
-                for i in 0..PIN_N {
-                    if PINDEFS[i].0 == key.as_str() {
-                        st.pin_gpio[i] = gpio;
+                for (pd, slot) in PINDEFS.iter().zip(st.pin_gpio.iter_mut()) {
+                    if pd.0 == key.as_str() {
+                        *slot = gpio;
                     }
                 }
                 push_pins(&u, &st);

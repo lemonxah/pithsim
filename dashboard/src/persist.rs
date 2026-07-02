@@ -522,8 +522,8 @@ pub fn load_buttons() -> Option<Vec<Vec<BtnData>>> {
 
 pub fn build_pins_json(s: &State) -> String {
     let mut j = Map::new();
-    for i in 0..PINDEFS.len() {
-        j.insert(PINDEFS[i].0.into(), json!(s.pin_gpio[i]));
+    for (pd, gpio) in PINDEFS.iter().zip(s.pin_gpio.iter()) {
+        j.insert(pd.0.into(), json!(gpio));
     }
     j.insert("race_screen".into(), json!(s.race_screen));
     j.insert("led_rev".into(), json!(s.led_rev));
