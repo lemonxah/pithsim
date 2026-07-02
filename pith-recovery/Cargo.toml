@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 rust-version = "1.77"
 description = "Pith DDU recovery app (ESP32-S3) — boots first from the factory partition, shows a touchscreen countdown, then chain-loads the main firmware. The on-device BIOS / recovery console."
-repository = "https://github.com/lemonxah/pithddu"
+repository = "https://github.com/lemonxah/pithsim"
 license = "MIT"
 
 [[bin]]

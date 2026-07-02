@@ -11,7 +11,7 @@ use std::path::Path;
 fn main() {
     // Single source of truth, shared by path with the dashboard. Lives in the
     // firmware tree; pith-core sits at the monorepo root.
-    let json_path = "../firmware/main/field_registry.json";
+    let json_path = "../firmware/ddu/main/field_registry.json";
     println!("cargo:rerun-if-changed={json_path}");
 
     let raw = std::fs::read_to_string(json_path)

@@ -67,9 +67,9 @@ pub fn repo_root() -> PathBuf {
 }
 
 pub fn default_firmware_path() -> Option<String> {
-    // The Rust firmware lives in the monorepo's `firmware/` subdir; `espflash
+    // The DDU firmware lives in the monorepo's `firmware/ddu` subdir; `espflash
     // save-image` writes `pithddu-<board>.bin` there. Pick the newest one.
-    let dir = repo_root().join("firmware");
+    let dir = repo_root().join("firmware").join("ddu");
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for e in entries.flatten() {

@@ -50,7 +50,7 @@ fn build_sh(root: &str, tail: &str) -> String {
     format!(
         "set -e; [ -d '{root}/.git' ] || git clone --depth 1 {FIRMWARE_GIT_URL} '{root}'; \
          git -C '{root}' pull --ff-only 2>/dev/null || true; \
-         cd '{root}/firmware'; {tail}"
+         cd '{root}/firmware/ddu'; {tail}"
     )
 }
 

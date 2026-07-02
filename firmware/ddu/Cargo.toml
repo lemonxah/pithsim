@@ -5,7 +5,7 @@ edition = "2021"
 resolver = "2"
 rust-version = "1.77"
 description = "Pith DDU sim-racing dashboard firmware (ESP32-S3), Rust rewrite"
-repository = "https://github.com/lemonxah/pithddu-firmware"
+repository = "https://github.com/lemonxah/pithsim"
 license = "MIT"
 
 [[bin]]
@@ -32,12 +32,12 @@ xiao_s3 = []
 [dependencies]
 log = "0.4"
 esp-idf-svc = "0.51"
-pith-core = { path = "../pith-core" }
+pith-core = { path = "../../pith-core" }
 # Shared runtime UI engine — the device renders pith-ui UiDocs (freeform race
 # screens) with dirty-rect, identical to the desktop preview.
-pith-ui = { path = "../pith-ui" }
+pith-ui = { path = "../../pith-ui" }
 # On-device BIOS / early-boot recovery UI (boot splash + recovery menu).
-pith-bios = { path = "../pith-bios" }
+pith-bios = { path = "../../pith-bios" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Display stack (Phase 4): dual ST7796 on the shared SPI2 bus + on-device drawing.

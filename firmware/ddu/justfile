@@ -15,7 +15,7 @@ release-build:
 
 # Write the main firmware app into the ota_0 slot (offset 0x1a0000). The RECOVERY
 # app (pith-recovery, in the factory slot) owns the bootloader + partition table —
-# flash that FIRST (cd ../pith-recovery && just flash). A full flash here would
+# flash that FIRST (cd ../../pith-recovery && just flash). A full flash here would
 # target the factory slot and clobber recovery, so we write only the app image to
 # ota_0. After this, recovery chain-loads ota_0 (NVS "mainslot" defaults to 0).
 # Download mode: recovery menu "USB flash mode", or hold BOOT + tap RESET.

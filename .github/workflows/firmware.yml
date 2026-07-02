@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: firmware
+        working-directory: firmware/ddu
     steps:
       - uses: actions/checkout@v4
 
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-xiao_s3
-          path: firmware/pithddu-xiao_s3.bin
+          path: firmware/ddu/pithddu-xiao_s3.bin
           if-no-files-found: error
 
   # The factory recovery app (BIOS/rescue console). Built on every push so a

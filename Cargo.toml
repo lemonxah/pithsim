@@ -2,7 +2,7 @@
 #
 # The firmware is a separate sub-workspace (its own esp toolchain + xtensa target
 # via firmware/.cargo + firmware/rust-toolchain.toml), so it is EXCLUDED here and
-# built with `cd firmware && cargo build`. The shared crates (pith-core, pith-ui)
+# built with `cd firmware/ddu `cd firmware && cargo build``cd firmware && cargo build` cargo build`. The shared crates (pith-core, pith-ui)
 # are no_std and host-testable, so they're members of this workspace AND path-
 # depended by the firmware.
 [workspace]

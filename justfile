@@ -65,7 +65,7 @@ version:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "crate versions (Cargo.toml):"
-    for f in dashboard firmware pith-core pith-ui pith-device pith-flash pith-shm-bridge; do
+    for f in dashboard firmware/ddu pith-core pith-ui pith-device pith-flash pith-shm-bridge; do
         [ -f "$f/Cargo.toml" ] || continue
         v=$(grep -m1 '^version' "$f/Cargo.toml" | sed -E 's/version *= *"([^"]+)".*/\1/')
         printf "  %-16s %s\n" "$f" "${v:-?}"
@@ -85,7 +85,7 @@ release stream version="":
     stream="{{stream}}"
     case "$stream" in
         dashboard) manifest="dashboard/Cargo.toml" ;;
-        firmware)  manifest="firmware/Cargo.toml" ;;
+        firmware)  manifest="firmware/ddu/Cargo.toml" ;;
         *) echo "usage: just release <dashboard|firmware> [version]" >&2; exit 1 ;;
     esac
     git fetch --tags --quiet

@@ -53,7 +53,7 @@ cargo test  -p pith-core
 cargo run   -p pith-dashboard --example ui_preview   # live pith-ui device preview
 
 # Firmware — esp toolchain (source ~/export-esp.sh first)
-cd firmware && cargo build --release
+cd firmware/ddu && cargo build --release
 
 # Recovery app — same esp toolchain, flashed to the factory partition
 cd pith-recovery && cargo build --release

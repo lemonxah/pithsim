@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "Pure-Rust runtime-interpreted UI engine for the Pith DDU (no_std). A UI is a serialized document (postcard) interpreted + rendered at runtime via embedded-graphics — no recompile to change screens. Shared by the firmware (device render) and the dashboard (desktop preview/editor)."
 license = "BSD-3-Clause"
-repository = "https://github.com/lemonxah/pithddu"
+repository = "https://github.com/lemonxah/pithsim"
 
 [features]
 default = []

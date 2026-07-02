@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "On-device BIOS / early-boot recovery UI for the Pith DDU (no_std). A touch-driven boot splash + recovery menu drawn with pith-ui's shared draw primitives (so it matches the rest of the UI); the firmware owns the boot flow and every side-effect (touch, NVS, reboot, OTA)."
 license = "BSD-3-Clause"
-repository = "https://github.com/lemonxah/pithddu"
+repository = "https://github.com/lemonxah/pithsim"
 
 [dependencies]
 # Draw with the SAME palette + fonts as every other screen.

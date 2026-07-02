@@ -4,7 +4,7 @@ version = "0.7.12"
 edition = "2021"
 description = "SimHub companion app for the Pith DDU sim-racing dash"
 license = "BSD-3-Clause"
-repository = "https://github.com/lemonxah/pithddu"
+repository = "https://github.com/lemonxah/pithsim"
 default-run = "pith-dashboard"
 
 [[bin]]
