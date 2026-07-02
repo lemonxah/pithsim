@@ -59,18 +59,27 @@ pub fn read_frame() -> Option<ShimRead> {
         (ACEVO_PHYSICS, ACEVO_GRAPHICS, ACEVO_STATIC, "AC EVO"),
         (AC_PHYSICS, AC_GRAPHICS, AC_STATIC, "AC/ACC"),
     ] {
+        let evo = label == "AC EVO";
         if let Some(pb) = win::read_any(phys) {
             if let Some(mut tel) = shm::parse_ac_physics(&pb) {
-                if let Some(gb) = win::read_any(graph) {
-                    shm::apply_acc_graphics(&mut tel, &gb);
+                let gb = win::read_any(graph);
+                // The ACC graphics offsets are ACC-only — EVO's
+                // SPageFileGraphicEvo is a different struct (narrow chars,
+                // driver/car strings @3020+), so applying them there read junk.
+                if !evo {
+                    if let Some(gb) = &gb {
+                        shm::apply_acc_graphics(&mut tel, gb);
+                    }
                 }
-                // Static-page identity is AC/ACC only (EVO's layout differs).
-                let (car, track) = if label == "AC/ACC" {
+                let (car, track) = if evo {
+                    shm::acevo_identity(
+                        &win::read_any(stat).unwrap_or_default(),
+                        &gb.unwrap_or_default(),
+                    )
+                } else {
                     win::read_any(stat)
                         .map(|sb| shm::ac_static_identity(&sb))
                         .unwrap_or((None, None))
-                } else {
-                    (None, None)
                 };
                 return Some(ShimRead { frame: tel.to_frame(), label, car, track, relatives: None, debug: None });
             }

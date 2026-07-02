@@ -13,3 +13,8 @@ phy_init,   data, phy,      0x11000,   0x1000,
 factory,    app,  factory,  0x20000,   0x180000,
 ota_0,      app,  ota_0,    0x1a0000,  0x300000,
 ota_1,      app,  ota_1,    0x4a0000,  0x300000,
+# Large-blob NVS (layout/editor/car JSON). Lives in the previously-unused tail
+# of the 8 MB flash, AFTER ota_1 — existing partitions keep their offsets, so
+# adding it doesn't move data; it just needs one full (USB) flash to appear.
+# The firmware falls back to the small default `nvs` when this is absent.
+nvsblob,    data, nvs,      0x7a0000,  0x60000,

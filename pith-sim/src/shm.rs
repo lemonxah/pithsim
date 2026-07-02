@@ -31,11 +31,15 @@ pub fn parse_ac_physics(b: &[u8]) -> Option<Telemetry> {
 
     // ---- common region (≤252): valid for both original AC and ACC ----
     if b.len() >= 256 {
-        // wheelsPressure[4] @88 (kPa→0.1kPa), tyreCoreTemperature[4] @152 (°C); FL,FR,RL,RR.
-        t.tp_fl = (le::f32(b, 88) * 10.0).round() as i32;
-        t.tp_fr = (le::f32(b, 92) * 10.0).round() as i32;
-        t.tp_rl = (le::f32(b, 96) * 10.0).round() as i32;
-        t.tp_rr = (le::f32(b, 100) * 10.0).round() as i32;
+        // wheelsPressure[4] @88 is in PSI (per the official shared-memory doc;
+        // ~27 in game) — convert to kPa so `tp_*` keeps one unit across sims
+        // (the rF2 path stores 0.1 kPa). tyreCoreTemperature[4] @152 (°C).
+        // Order FL,FR,RL,RR.
+        const PSI_KPA: f32 = 6.894_76;
+        t.tp_fl = (le::f32(b, 88) * PSI_KPA * 10.0).round() as i32;
+        t.tp_fr = (le::f32(b, 92) * PSI_KPA * 10.0).round() as i32;
+        t.tp_rl = (le::f32(b, 96) * PSI_KPA * 10.0).round() as i32;
+        t.tp_rr = (le::f32(b, 100) * PSI_KPA * 10.0).round() as i32;
         set_tyre(&mut t,
             le::f32(b, 152).round() as i32, le::f32(b, 156).round() as i32,
             le::f32(b, 160).round() as i32, le::f32(b, 164).round() as i32);
@@ -104,12 +108,33 @@ fn map_acc_flag(f: i32) -> i32 {
 
 /// Car model + track from the AC / ACC `SPageFileStatic` page: `carModel`
 /// (UTF-16 `wchar[33]`) @68, `track` @134. (AC EVO uses a different layout — do
-/// not use this for `acevo_pmf_static`.)
+/// not use this for `acevo_pmf_static`; see [`acevo_identity`].)
 pub fn ac_static_identity(s: &[u8]) -> (Option<String>, Option<String>) {
     if s.len() < 200 {
         return (None, None);
     }
     (non_empty(utf16_str(s, 68, 33)), non_empty(utf16_str(s, 134, 33)))
+}
+
+/// Car model + track from AC EVO's pages. Unlike AC/ACC, EVO strings are
+/// narrow 8-bit chars (pack(4)) and the CAR lives on the GRAPHICS page:
+/// `SPageFileGraphicEvo.car_model` `char[33]` @3086 (after driver name @3020 /
+/// surname @3053); `SPageFileStaticEvo.track` `char[33]` @136 (+ config @169).
+/// Layout cross-verified between dSyncro/acevo-shared-memory and CrewChiefV4's
+/// `ACEData.cs`. EVO is early-access — Kunos has changed structs between
+/// builds — so both reads are length-gated and empty strings return `None`.
+pub fn acevo_identity(static_b: &[u8], graphics_b: &[u8]) -> (Option<String>, Option<String>) {
+    let car = if graphics_b.len() >= 3086 + 33 {
+        non_empty(ascii_str(graphics_b, 3086, 33))
+    } else {
+        None
+    };
+    let track = if static_b.len() >= 136 + 33 {
+        non_empty(ascii_str(static_b, 136, 33))
+    } else {
+        None
+    };
+    (car, track)
 }
 
 /// Merge rF2/LMU `$rFactor2SMMP_Extended$` aid levels into a telemetry snapshot —
@@ -173,6 +198,37 @@ pub fn apply_lmu_native(t: &mut Telemetry, b: &[u8]) {
     let soc = le::f64(b, base + 704);
     if soc.is_finite() && (0.0..=1.0).contains(&soc) {
         t.battery_pct = (soc * 1000.0).round() as i32;
+    }
+    // Tyre temps: LMU's in-game HUD shows the INNER-LAYER temperature (steady,
+    // ~bulk rubber), not the raw contact-surface tread that parse_rf2 mapped —
+    // surface swings ±25 °C between a straight and a braking zone, which is why
+    // the dash disagreed so violently with the (stable) HUD number. The native
+    // entry mirrors the rF2 wheel layout, and unlike the compat plugin buffer
+    // (whose carcass reads ~ambient in LMU) it's written by the game itself.
+    // Every value is gated on a plausible Kelvin range so a layout surprise
+    // degrades to the old behaviour instead of garbage.
+    if let Some(v) = crate::rf2::VehicleTelem::at(b, base) {
+        let ok = |k: f64| k.is_finite() && (200.0..500.0).contains(&k);
+        let dc = |k: f64| ((k - 273.15) * 10.0).round() as i32; // K → 0.1 °C
+        let set =
+            |i: usize, zi: &mut i32, zm: &mut i32, zo: &mut i32, avg: &mut i32, carc: &mut i32| {
+                let w = v.wheel(i);
+                let (ki, km, ko) = (w.inner_temp_k(0), w.inner_temp_k(1), w.inner_temp_k(2));
+                if ok(ki) && ok(km) && ok(ko) {
+                    *zi = dc(ki);
+                    *zm = dc(km);
+                    *zo = dc(ko);
+                    *avg = dc((ki + km + ko) / 3.0);
+                }
+                let kc = w.carcass_temp_k();
+                if ok(kc) {
+                    *carc = dc(kc);
+                }
+            };
+        set(0, &mut t.tt_fl_i, &mut t.tt_fl_m, &mut t.tt_fl_o, &mut t.tt_avg_fl, &mut t.tt_carc_fl);
+        set(1, &mut t.tt_fr_i, &mut t.tt_fr_m, &mut t.tt_fr_o, &mut t.tt_avg_fr, &mut t.tt_carc_fr);
+        set(2, &mut t.tt_rl_i, &mut t.tt_rl_m, &mut t.tt_rl_o, &mut t.tt_avg_rl, &mut t.tt_carc_rl);
+        set(3, &mut t.tt_rr_i, &mut t.tt_rr_m, &mut t.tt_rr_o, &mut t.tt_avg_rr, &mut t.tt_carc_rr);
     }
 }
 
@@ -534,12 +590,12 @@ pub fn parse_rf2(telem: &[u8], scoring: &[u8]) -> Option<Telemetry> {
         t.battery_pct = (batt * 1000.0).round().clamp(0.0, 1000.0) as i32;
     }
     t.ers_state = v.electric_boost_motor_state();
-    // Per-wheel tyre data. The in-game tyre HUD shows the SURFACE tread temp
-    // (`mTemperature`, left/center/right) — the responsive track-contact layer that
-    // heats fast under load. Decisive signature: the HUD reads HIGHER and climbs
-    // FASTER than the inner layer/carcass, which only a fast layer (surface) does;
-    // a smoothed value would lag, not lead. It just happens to ≈ the inner layer
-    // when tyres are cool (both ~upper-50s), which earlier looked like a match.
+    // Per-wheel tyre data. Stock rF2's tyre HUD tracks the SURFACE tread temp
+    // (`mTemperature`, left/center/right), so that's what goes in here — but
+    // LMU's HUD shows the much steadier INNER-LAYER temp, so when LMU's native
+    // map is present `apply_lmu_native` OVERRIDES these with inner-layer values
+    // (surface swings ±25 °C between straight and braking zone; the user-visible
+    // symptom of showing surface on LMU was "55–105 °C while the HUD says 79").
     // `_i/_m/_o` = surface inner/middle/outer; tt_carc keeps the carcass core.
     // Kelvin → 0.1°C with a 200 K floor: garbage wheels become NA → "--", not -273°C.
     const NA: i32 = pith_core::format::NA;
@@ -747,5 +803,56 @@ mod tests {
         assert_eq!(out.rpm, 7200);
         assert_eq!(out.max_rpm, 8000);
         assert_eq!(out.speed_kmh, 108);
+    }
+
+    #[test]
+    fn acevo_car_and_track() {
+        // Car on the GRAPHICS page (char[33] @3086), track on STATIC (@136).
+        let mut g = vec![0u8; 4900];
+        g[3086..3086 + 12].copy_from_slice(b"ks_porsche_g\x00"[..12].try_into().unwrap());
+        let mut s = vec![0u8; 208];
+        s[136..136 + 7].copy_from_slice(b"laguna\x00");
+        let (car, track) = acevo_identity(&s, &g);
+        assert_eq!(car.as_deref(), Some("ks_porsche_g"));
+        assert_eq!(track.as_deref(), Some("laguna"));
+        // Short/absent pages → None, never a panic.
+        assert_eq!(acevo_identity(&[], &[]), (None, None));
+    }
+
+    /// LMU HUD parity: the native map's inner-layer temps must OVERRIDE the
+    /// surface temps parse_rf2 put in (surface swings wildly under braking;
+    /// LMU's HUD shows the steady inner layer). Garbage/zero wheels must NOT
+    /// override (plausibility gate).
+    #[test]
+    fn lmu_native_inner_layer_overrides_tyre_temps() {
+        let mut t = Telemetry::idle();
+        // parse_rf2 left violent surface temps in (e.g. braking spike, 105 °C).
+        t.tt_fl_i = 1050;
+        t.tt_fl_m = 1050;
+        t.tt_fl_o = 1050;
+        t.tt_avg_fl = 1050;
+
+        // Minimal LMU_Data: header flag + player idx 0 + one 1888-byte entry.
+        let base = 128468;
+        let mut b = vec![0u8; base + 1888];
+        b[128464] = 1; // activeVehicles
+        b[128465] = 0; // playerVehicleIdx
+        // FL wheel = entry + WHEELS(848) + 0*260; inner layer zones @+212 (Kelvin).
+        let w = base + 848;
+        let k: f64 = 79.0 + 273.15; // the steady HUD-style 79 °C
+        for z in 0..3 {
+            b[w + 212 + z * 8..w + 212 + (z + 1) * 8].copy_from_slice(&k.to_le_bytes());
+        }
+        b[w + 204..w + 212].copy_from_slice(&(90.0f64 + 273.15).to_le_bytes()); // carcass
+
+        apply_lmu_native(&mut t, &b);
+        assert_eq!(t.tt_fl_i, 790);
+        assert_eq!(t.tt_fl_m, 790);
+        assert_eq!(t.tt_fl_o, 790);
+        assert_eq!(t.tt_avg_fl, 790);
+        assert_eq!(t.tt_carc_fl, 900);
+        // FR wheel was all zeros in the buffer (0 K = implausible) → untouched.
+        assert_eq!(t.tt_fr_i, 0);
+        assert_eq!(t.tt_avg_fr, 0);
     }
 }

@@ -25,7 +25,24 @@ fn main() {
     usb::init_logger();
 
     let serial = device::serial();
-    log::info!("pithddu boot — serial {serial}");
+    // Log WHY we booted (panic? watchdog? brownout? plain restart?) — streamed to
+    // the GUI over the HID log channel, so an unexplained reboot in the field
+    // (which looks like a spontaneous wake-from-sleep) is diagnosable after the fact.
+    let rr = unsafe { esp_idf_svc::sys::esp_reset_reason() };
+    let rr_name = match rr {
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_POWERON => "power-on",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_EXT => "external pin",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_SW => "software restart",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_PANIC => "PANIC",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_INT_WDT => "INTERRUPT WATCHDOG",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_TASK_WDT => "TASK WATCHDOG",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_WDT => "other watchdog",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_DEEPSLEEP => "deep-sleep wake",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_BROWNOUT => "BROWNOUT",
+        esp_idf_svc::sys::esp_reset_reason_t_ESP_RST_USB => "usb",
+        _ => "other",
+    };
+    log::info!("pithddu boot — serial {serial} (reset: {rr_name})");
 
     // Restore PC-pushed config (pins, layout, buttons, car, brightness) from NVS.
     // The LED task re-applies the saved car shift-light profile itself (see
@@ -69,9 +86,8 @@ fn main() {
         ota::check_timeout();
 
         // Ran stably past the risky boot window (~5 s) -> declare this boot good,
-        // which clears the fail counter. Skipped in SAFE MODE so a forced-recovery
-        // failure stays visible until the user resolves it.
-        if !boot_confirmed && ticks > 1000 && !state::safe_mode() {
+        // which clears the fail counter the recovery app displays.
+        if !boot_confirmed && ticks > 1000 {
             boot_confirmed = true;
             state::boot_mark_ok();
         }

@@ -47,7 +47,8 @@ impl RelCar {
         let end = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_LEN);
         core::str::from_utf8(&self.name[..end]).unwrap_or("")
     }
-    fn set_name(&mut self, s: &str) {
+    /// Set the display name (ASCII-sanitised, wire separators replaced, truncated).
+    pub fn set_name(&mut self, s: &str) {
         self.name = [0; NAME_LEN];
         for (dst, b) in self.name.iter_mut().zip(s.bytes()) {
             // keep it ASCII-printable and free of the wire separators.
@@ -236,8 +237,15 @@ pub fn parse_rf2_relatives(scoring: &[u8]) -> Option<Relatives> {
     Some(select(built, player_i))
 }
 
+/// Build a bounded [`Relatives`] from a host-assembled car list (any sim).
+/// Applies the same leading-group ∪ nearest-to-player windowing every source
+/// uses, so ACC broadcasting, rF2 scoring, etc. produce identical wire lines.
+pub fn from_cars(built: Vec<RelCar>, player_i: usize) -> Relatives {
+    select(built, player_i)
+}
+
 /// Trim a full vehicle name to a compact label (last word, or the head).
-fn short_name(name: &str) -> &str {
+pub fn short_name(name: &str) -> &str {
     let t = name.trim();
     if t.len() <= NAME_LEN {
         t

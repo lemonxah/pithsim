@@ -40,6 +40,7 @@ pub const REGISTRY: &[&dyn GameDecoder] = &[
     &super::pcars::PCarsDecoder,
     &super::codemasters::CodemastersDecoder,
     &super::outgauge::OutGaugeDecoder,
+    &super::piboso::PiBoSoDecoder,
 ];
 
 /// Run a datagram through every registered decoder; return the first match with

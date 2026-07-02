@@ -16,6 +16,39 @@ pub const HEARTBEAT: &[u8] = b"A";
 pub const SEND_PORT: u16 = 33739; // we send the heartbeat here
 pub const RECV_PORT: u16 = 33740; // we bind here to receive
 
+/// Car code (`CarCode` i32 @0x124, the packet's last field) from a decrypted
+/// packet. GT7 sends no car NAME — this numeric id keys [`car_name`]. `None`
+/// when the packet is short or the value is implausible (cars with >8 gears
+/// overflow the preceding gear-ratio array into this field — PDTools caveat).
+pub fn car_code(b: &[u8]) -> Option<i32> {
+    if b.len() < 0x128 {
+        return None;
+    }
+    let id = le::i32(b, 0x124);
+    (0..500_000).contains(&id).then_some(id)
+}
+
+/// Car name for a GT7 car code, from the embedded community DB
+/// (ddm999/gt7info `cars.csv`, `ID,ShortName,Maker`).
+pub fn car_name(code: i32) -> Option<&'static str> {
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+    static DB: OnceLock<HashMap<i32, &'static str>> = OnceLock::new();
+    let db = DB.get_or_init(|| {
+        let mut m = HashMap::new();
+        for line in include_str!("gt7_cars.csv").lines().skip(1) {
+            let mut it = line.splitn(3, ',');
+            if let (Some(id), Some(name)) = (it.next().and_then(|s| s.parse().ok()), it.next()) {
+                if !name.is_empty() {
+                    m.insert(id, name);
+                }
+            }
+        }
+        m
+    });
+    db.get(&code).copied()
+}
+
 const MAGIC: u32 = 0x4737_5330;
 // Salsa20 key = first 32 bytes of this 38-byte string.
 const KEY_SRC: &[u8] = b"Simulator Interface Packet GT7 ver 0.0";
@@ -68,6 +101,9 @@ pub fn parse(b: &[u8]) -> Option<Telemetry> {
     t.fuel_cap_dl = (cap_l * 10.0).round().max(0.0) as i32;
     t.throttle = le::u8(b, 0x91) as i32 * 100 / 255;
     t.brake = le::u8(b, 0x92) as i32 * 100 / 255;
+    // CAVEAT: GT7 sends static dummies here — water is always 85, oil always
+    // 110 (confirmed by the PDTools reference). Kept so the widgets show
+    // *something*, but they never move.
     t.water_c = le::f32(b, 0x58).round() as i32;
     t.oil_c = le::f32(b, 0x5C).round() as i32;
     t.boost_kpa = ((le::f32(b, 0x50) - 1.0) * 100.0).round() as i32; // 1.0 = 0 kPa
@@ -87,11 +123,14 @@ pub fn parse(b: &[u8]) -> Option<Telemetry> {
     t.ignition = (flags & 0x0001 != 0) as i32;
     t.headlights = (flags & 0x0080 != 0) as i32;
     t.tc_active = (flags & 0x0800 != 0) as i32;
-    // Gear: low nibble = current. 0 = neutral, 15 = reverse, else forward.
+    // Gear: low nibble = current. 0 = REVERSE, 15 = NEUTRAL (all bits set =
+    // clutch disengaged), else the forward gear — per the GTPlanet reverse-
+    // engineering + Bornhall/Nenkai reference decoders. (We shipped this
+    // inverted for a while: R showed as N and vice versa.)
     let cur = (le::u8(b, 0x90) & 0x0F) as i32;
     let gear = match cur {
-        0 => 0,
-        15 => -1,
+        0 => -1,
+        15 => 0,
         g => g,
     };
     t.gear = le::gear_byte(gear);
@@ -139,5 +178,17 @@ mod tests {
         assert_eq!(t.max_rpm, 8000);
         assert_eq!(t.gear, b'4');
         assert_eq!(t.throttle, 100);
+    }
+
+    /// Regression: the gear nibble is 0 = REVERSE and 15 = NEUTRAL (we shipped
+    /// this inverted for a while).
+    #[test]
+    fn gear_nibble_reverse_and_neutral() {
+        let mut p = vec![0u8; 296];
+        p[0..4].copy_from_slice(&MAGIC.to_le_bytes());
+        p[0x90] = 0x00;
+        assert_eq!(parse(&p).unwrap().gear, b'R');
+        p[0x90] = 0x0F;
+        assert_eq!(parse(&p).unwrap().gear, b'N');
     }
 }

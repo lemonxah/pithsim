@@ -23,6 +23,200 @@ const COMMITS_URL: &str =
 const TARBALL_URL: &str =
     "https://codeload.github.com/Lovely-Sim-Racing/lovely-car-data/tar.gz/refs/heads/main";
 
+// ---- built-in car profiles (dashboard/cars/*.json, embedded at build) ----
+//
+// Profiles we ship with the tool for games the lovely-car-data library can't
+// serve. Each is a normal library-schema JSON file in `dashboard/cars/` —
+// add a file + one table entry to add a game. They are injected at the FRONT
+// of `all_cars` (so local profiles win a matching tie against the downloaded
+// library), reachable via the `builtin:` path scheme in [`car_body_by_path`],
+// and need no network or packaging step (embedded via `include_str!`).
+//
+// F1: the UDP telemetry never sends a car/team name (`Decoded::car` is always
+// `None`), so a name match can never fire — `decoder` lets the F1 decoder
+// auto-select this profile directly. Every F1 car in a season runs the same
+// spec hybrid V6 (the ledRpm thresholds are identical across every team entry
+// in lovely-car-data, confirming the shared-engine assumption), so one
+// profile is genuinely accurate for the whole grid. Forza and most other UDP
+// decoders deliberately have NO builtin: they report the vehicle's live
+// `max_rpm`, so the generic rev bar already scales per-vehicle.
+struct BuiltinCar {
+    /// Sim ids this profile appears under in the car library.
+    sims: &'static [&'static str],
+    /// Decoder `name()` that auto-selects this profile when its game sends no
+    /// usable car identity ("" = never auto-selected, library entry only).
+    decoder: &'static str,
+    /// `builtin:` path suffix — the stable lookup key for `car_body_by_path`.
+    key: &'static str,
+    json: &'static str,
+}
+
+const BUILTIN_CARS: &[BuiltinCar] = &[BuiltinCar {
+    sims: &["f12024", "f12025"],
+    decoder: pith_sim::f1::NAME,
+    key: "f1",
+    json: include_str!("../../cars/f1.json"),
+}];
+
+/// The embedded JSON for a `builtin:<key>` path, if it is one.
+fn builtin_body(path: &str) -> Option<&'static str> {
+    let key = path.strip_prefix("builtin:")?;
+    BUILTIN_CARS.iter().find(|b| b.key == key).map(|b| b.json)
+}
+
+/// The built-in profiles as library entries (one per sim id), used to seed
+/// `all_cars` ahead of the downloaded manifest.
+pub fn builtin_car_items() -> Vec<CarItem> {
+    let mut out = Vec::new();
+    for b in BUILTIN_CARS {
+        let Ok(j) = serde_json::from_str::<Value>(b.json) else {
+            continue; // malformed shipped file — also caught by the unit test
+        };
+        let cols = parse_car_led_colors(&j);
+        for sim in b.sims {
+            out.push(CarItem {
+                sim: sim.to_string(),
+                name: trim(j.get("carName").and_then(|x| x.as_str()).unwrap_or(b.key)),
+                id: j.get("carId").and_then(|x| x.as_str()).unwrap_or(b.key).to_string(),
+                path: format!("builtin:{}", b.key),
+                klass: j.get("carClass").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                redline: derive_redline(&j),
+                led_n: cols.len() as i32,
+                led_cols: cols.clone(),
+            });
+        }
+    }
+    out
+}
+
+/// Auto-apply the built-in profile tied to `decoder_name`, if any. Used when a
+/// decoder's game sent no usable car identity (or no library match was found).
+/// Shares `last_auto_model` with [`auto_apply_car_model`] as the single "what's
+/// on the device" dedup key, so device-reconnect / game-switch invalidation
+/// (which clear that key) automatically re-push this profile too.
+pub fn apply_builtin_for_decoder(ctx: &Arc<Ctx>, s: &mut State, decoder_name: &str) -> bool {
+    let Some(b) = BUILTIN_CARS.iter().find(|b| !b.decoder.is_empty() && b.decoder == decoder_name)
+    else {
+        return false;
+    };
+    // Find its library entry (seeded by builtin_car_items); fall back to a
+    // synthesized item so this still works before any manifest has loaded.
+    let path = format!("builtin:{}", b.key);
+    let car = s
+        .all_cars
+        .iter()
+        .find(|c| c.path == path)
+        .cloned()
+        .or_else(|| builtin_car_items().into_iter().find(|c| c.path == path));
+    let Some(car) = car else {
+        return false;
+    };
+    if s.last_auto_model == car.id {
+        return true; // already applied (key cleared on reconnect/game switch)
+    }
+    s.last_auto_model = car.id.clone();
+    spawn_apply_profile(ctx, car, true);
+    true
+}
+
+/// No car profile could be matched for this game — clear the device's loaded
+/// car (`@C{}`) so its LED strip falls back to the GENERIC rev bar, which is
+/// driven by the telemetry's live shift/max RPM (every decoder sets those).
+/// Without this, a stale profile from a previous game — persisted on the
+/// device across reboots — keeps per-gear thresholds the new game's cars may
+/// never reach, so the shift lights just stay dark. Dedups on
+/// `last_auto_model` like every other apply path (a real match later
+/// overwrites the sentinel and wins).
+pub fn apply_generic_profile(ctx: &Arc<Ctx>, s: &mut State, decoder_name: &str) {
+    let sentinel = format!("#generic:{decoder_name}");
+    if s.last_auto_model == sentinel {
+        return;
+    }
+    s.last_auto_model = sentinel;
+    // Preview parity: reset the editor's LED model to the generic ramp so the
+    // on-screen strip mirrors what the device will now show.
+    crate::catalog::seed_shift(s);
+    s.car_name.clear();
+    s.car_id.clear();
+    let label = format!("Generic shift lights ({decoder_name}, max-RPM)");
+    let ctx = ctx.clone();
+    ctx.clone().spawn(async move {
+        let cleared = ctx.dash().connected() && ctx.dash().push_car("{}");
+        let ctx2 = ctx.clone();
+        ctx.ui_run(move |u| {
+            let s = ctx2.lock();
+            push_shift_scalars(&u, &s);
+            push_led_model(&u, &s);
+            u.global::<CarLib>().set_detected_car(sstr(""));
+            u.global::<CarLib>().set_status(sstr(&if cleared {
+                label.clone()
+            } else {
+                format!("{label} — device offline")
+            }));
+        });
+    });
+}
+
+/// Shared tail of the auto-apply paths: fetch the profile body (instant for
+/// `builtin:` paths), push it to the device, and load it into the GUI state.
+/// Runs on a spawned task so the device round-trip (up to ~2 s on a wedged
+/// HID link) never happens on the caller's thread — callers typically hold
+/// the State mutex, and blocking there freezes the UI + every telemetry loop.
+fn spawn_apply_profile(ctx: &Arc<Ctx>, car: CarItem, builtin: bool) {
+    let ctx = ctx.clone();
+    ctx.clone().spawn(async move {
+        let body = car_body_by_path(&car.path).await;
+        let mut redline = car.redline;
+        let minified = match serde_json::from_str::<Value>(&body) {
+            Ok(j) => {
+                if redline == 0 {
+                    redline = derive_redline(&j);
+                }
+                serde_json::to_string(&j).unwrap_or_default()
+            }
+            Err(_) => {
+                let label = car.name.clone();
+                ctx.ui_run(move |u| {
+                    u.global::<CarLib>().set_status(sstr(&format!("{label}: profile parse error")));
+                });
+                return;
+            }
+        };
+        let ok = !minified.is_empty() && ctx.dash().connected() && ctx.dash().push_car(&minified);
+        let ctx2 = ctx.clone();
+        ctx.ui_run(move |u| {
+            let mut s = ctx2.lock();
+            if redline > 0 {
+                s.redline_rpm = redline;
+                s.shift_custom = false;
+            }
+            s.car_name = car.name.clone();
+            s.car_game = car.sim.clone();
+            s.car_id = car.id.clone();
+            if let Ok(j) = serde_json::from_str::<Value>(&body) {
+                load_car_into_leds(&mut s, &j);
+            }
+            if let Some(ai) = s.all_cars.iter().position(|c| c.path == car.path && c.sim == car.sim) {
+                if let Some(fi) = s.filtered.iter().position(|&x| x == ai) {
+                    u.global::<CarLib>().set_sel(fi as i32);
+                }
+            }
+            push_shift_scalars(&u, &s);
+            push_led_model(&u, &s);
+            push_car_results(&u, &s);
+            crate::persist::save_active_car(&s);
+            if builtin {
+                u.global::<CarLib>().set_detected_car(sstr(&car.name));
+            }
+            u.global::<CarLib>().set_status(sstr(&if ok {
+                format!("Auto: {}", car.name)
+            } else {
+                format!("Matched {} (offline)", car.name)
+            }));
+        });
+    });
+}
+
 fn json_int(v: &Value) -> Option<i64> {
     v.as_i64().or_else(|| v.as_f64().map(|f| f as i64))
 }
@@ -118,6 +312,10 @@ fn car_dedup_sig(sim: &str, it: &CarItem) -> String {
 
 pub fn parse_manifest(s: &mut State, body: &str) {
     s.all_cars.clear();
+    // Shipped built-ins come first — present even with no manifest (offline,
+    // first run), and ahead of the downloaded library so a matching tie in
+    // auto_apply_car_model resolves to our own profile.
+    s.all_cars.extend(builtin_car_items());
     let j: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => return,
@@ -158,6 +356,10 @@ pub fn parse_manifest(s: &mut State, body: &str) {
 }
 
 pub async fn car_body_by_path(path: &str) -> String {
+    // Shipped built-in profile — embedded in the binary, no disk or network.
+    if let Some(body) = builtin_body(path) {
+        return body.to_string();
+    }
     let body = read_file(&data_root().join(path));
     if !body.is_empty() {
         return body;
@@ -492,16 +694,27 @@ pub fn set_active_car(ctx: &Arc<Ctx>, filtered_idx: i32) {
     });
 }
 
-pub fn auto_apply_car_model(ctx: &Arc<Ctx>, s: &mut State, model: &str) {
-    if model.is_empty() || model == s.last_auto_model {
-        return;
+/// Match `model` against the car library (built-ins seeded first, then the
+/// downloaded manifest) and push the LED profile if found. Returns `false`
+/// when nothing matched — callers can fall back to a decoder-keyed built-in
+/// ([`apply_builtin_for_decoder`]) instead of leaving the generic bar.
+///
+/// `last_auto_model` is recorded ONLY on a successful match: a failed lookup
+/// must stay retryable, because the library often isn't loaded yet on the
+/// first tick (manifest fetch is async) — caching the failure would block the
+/// profile for the whole session.
+pub fn auto_apply_car_model(ctx: &Arc<Ctx>, s: &mut State, model: &str) -> bool {
+    if model.is_empty() {
+        return false;
     }
-    s.last_auto_model = model.to_string();
+    if model == s.last_auto_model {
+        return true; // already applied this model — not a failure, just a dedup
+    }
     let sim = s.sim_of(s.game);
     // Match on the bare model — drop entry/livery suffixes like "#23:WEC" (rF2/LMU).
     let nm = norm_name(crate::util::clean_car_name(model));
     if nm.is_empty() {
-        return;
+        return false;
     }
     let mut best: i32 = -1;
     let mut best_score: usize = 0;
@@ -533,47 +746,40 @@ pub fn auto_apply_car_model(ctx: &Arc<Ctx>, s: &mut State, model: &str) {
             u.global::<CarLib>()
                 .set_status(sstr(&format!("No library match for '{model_owned}'")));
         });
-        return;
+        return false;
     }
-    let best = best as usize;
-    let car = s.all_cars[best].clone();
-    let ctx = ctx.clone();
-    ctx.clone().spawn(async move {
-        let body = car_body_by_path(&car.path).await;
-        let mut minified = String::new();
-        let mut redline = car.redline;
-        if let Ok(j) = serde_json::from_str::<Value>(&body) {
-            minified = serde_json::to_string(&j).unwrap_or_default();
-            if redline == 0 {
-                redline = derive_redline(&j);
-            }
+    s.last_auto_model = model.to_string();
+    let car = s.all_cars[best as usize].clone();
+    spawn_apply_profile(ctx, car, false);
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builtin_profiles_are_valid_and_sane() {
+        for b in BUILTIN_CARS {
+            let j: Value = serde_json::from_str(b.json)
+                .unwrap_or_else(|e| panic!("cars/{}.json must be valid JSON: {e}", b.key));
+            let redline = derive_redline(&j);
+            assert!(redline > 4000, "cars/{}.json: implausible redline {redline}", b.key);
+            let cols = parse_car_led_colors(&j);
+            assert_eq!(cols.len(), 12, "cars/{}.json: colors clamp to the strip", b.key);
+            assert!(cols.iter().any(|&c| c != 0), "cars/{}.json: all-blank colors", b.key);
+            assert!(!b.sims.is_empty(), "cars/{}.json: no sims listed", b.key);
         }
-        let ok = !minified.is_empty() && ctx.dash().connected() && ctx.dash().push_car(&minified);
-        let ctx2 = ctx.clone();
-        ctx.ui_run(move |u| {
-            let mut s = ctx2.lock();
-            if redline > 0 {
-                s.redline_rpm = redline;
-                s.shift_custom = false;
-            }
-            s.car_name = car.name.clone();
-            s.car_game = car.sim.clone();
-            s.car_id = car.id.clone();
-            if let Ok(j) = serde_json::from_str::<Value>(&body) {
-                load_car_into_leds(&mut s, &j);
-            }
-            if let Some(fi) = s.filtered.iter().position(|&x| x == best) {
-                u.global::<CarLib>().set_sel(fi as i32);
-            }
-            push_shift_scalars(&u, &s);
-            push_led_model(&u, &s);
-            push_car_results(&u, &s);
-            crate::persist::save_active_car(&s);
-            u.global::<CarLib>().set_status(sstr(&if ok {
-                format!("Auto: {}", car.name)
-            } else {
-                format!("Matched {} (offline)", car.name)
-            }));
-        });
-    });
+    }
+
+    #[test]
+    fn builtin_items_seed_every_sim() {
+        let items = builtin_car_items();
+        // f1.json is listed under both F1 sims, keyed by the decoder's real name.
+        assert!(items.iter().any(|c| c.sim == "f12024" && c.path == "builtin:f1"));
+        assert!(items.iter().any(|c| c.sim == "f12025" && c.path == "builtin:f1"));
+        assert!(BUILTIN_CARS.iter().any(|b| b.decoder == pith_sim::f1::NAME));
+        assert_eq!(builtin_body("builtin:f1"), Some(BUILTIN_CARS[0].json));
+        assert_eq!(builtin_body("f12025/220.json"), None);
+    }
 }

@@ -30,28 +30,33 @@ pub enum Action {
     /// Expose the NVS contents as a USB drive (read-only) so the host can see the
     /// locally-stored config files. Recovery-app only.
     MountUsb,
+    /// Restart into the ROM's USB download (bootloader/DFU) mode so the host can
+    /// flash over USB without touching the physical BOOT+RESET buttons.
+    Download,
     /// Reboot now (returns to recovery).
     Reboot,
 }
 
 // Menu button rects (x, y, w, h); each maps to an accent colour + action.
-const BOOT: (i32, i32, i32, i32) = (60, 100, 360, 44);
-const RESET: (i32, i32, i32, i32) = (60, 150, 360, 44);
-const MOUNT: (i32, i32, i32, i32) = (60, 200, 360, 44);
-const REBOOT: (i32, i32, i32, i32) = (60, 250, 360, 44);
+const BOOT: (i32, i32, i32, i32) = (60, 94, 360, 38);
+const RESET: (i32, i32, i32, i32) = (60, 136, 360, 38);
+const MOUNT: (i32, i32, i32, i32) = (60, 178, 360, 38);
+const DOWNLOAD: (i32, i32, i32, i32) = (60, 220, 360, 38);
+const REBOOT: (i32, i32, i32, i32) = (60, 262, 360, 38);
 
 fn menu_def(i: usize) -> ((i32, i32, i32, i32), &'static str, Pal, Action) {
     match i {
         0 => (BOOT, "Boot firmware", Pal::Green, Action::Boot),
         1 => (RESET, "Reset config", Pal::Amber, Action::ResetConfig),
         2 => (MOUNT, "Mount as USB drive", Pal::Cyan, Action::MountUsb),
+        3 => (DOWNLOAD, "USB flash mode (download)", Pal::Red, Action::Download),
         _ => (REBOOT, "Reboot", Pal::White, Action::Reboot),
     }
 }
 
 /// Number of menu buttons.
 pub fn menu_button_count() -> usize {
-    4
+    5
 }
 /// Screen rect (x, y, w, h) of menu button `i` — so the caller can blit just it.
 pub fn menu_button_rect(i: usize) -> (i32, i32, i32, i32) {
@@ -138,7 +143,7 @@ pub fn render_menu<D: DrawTarget<Color = Rgb565>>(d: &mut D, version: &str, slot
     for i in 0..menu_button_count() {
         draw_menu_button(d, i, false);
     }
-    text(d, "reflash from the dashboard or hold for download mode", W / 2, 306, 11, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+    text(d, "USB flash mode = flash from the PC, no BOOT/RESET buttons", W / 2, 310, 11, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
 }
 
 /// A simple centered two-line status / placeholder screen.

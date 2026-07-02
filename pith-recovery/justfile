@@ -16,10 +16,14 @@ release-build:
 # Full flash: bootloader + the custom partition table (factory + dual-OTA) + the
 # recovery app into the FACTORY slot. This lays down the partition table the whole
 # device uses, so flash RECOVERY FIRST, then write the main firmware to ota_0
-# (firmware/: just flash). BOOT-mode required: hold BOOT, tap RESET, release BOOT.
+# (firmware/: just flash). Download mode: recovery menu "USB flash mode", or hold
+# BOOT + tap RESET. --after watchdog-reset: full chip reset that clears the RTC
+# force-download latch (a soft reset lands back in ROM download mode after a
+# menu-triggered download entry).
 flash port="":
     cargo build --release
     espflash flash \
+        --after watchdog-reset \
         --bootloader target/xtensa-esp32s3-espidf/release/bootloader.bin \
         --partition-table target/xtensa-esp32s3-espidf/release/partition-table.bin \
         {{ if port != "" { "-p " + port } else { "" } }} \

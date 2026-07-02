@@ -199,18 +199,3 @@ pub fn return_to_recovery_on_next_boot() {
         }
     }
 }
-
-/// Label of the flash slot we're running from (e.g. "ota_0" / "ota_1" / "factory").
-/// Shown on the boot splash so you can see which image actually booted.
-pub fn running_label() -> String {
-    unsafe {
-        let p = sys::esp_ota_get_running_partition();
-        if p.is_null() {
-            return "?".to_string();
-        }
-        core::ffi::CStr::from_ptr((*p).label.as_ptr())
-            .to_str()
-            .unwrap_or("?")
-            .to_string()
-    }
-}

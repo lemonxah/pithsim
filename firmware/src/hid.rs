@@ -1,6 +1,7 @@
 //! USB HID gamepad — a 32-button "button box" the sim sees as a controller.
-//! Touch widgets call pulse()/set(); a task pushes a joystick report (id 1) via
-//! the pith_usb shim whenever the button mask changes. Port of hid_gamepad.c.
+//! Touch widgets hold/release via set(); a task pushes a joystick report (id 1)
+//! via the pith_usb shim whenever the button mask changes. Port of hid_gamepad.c
+//! (the old tap-pulse auto-release went away with true press-and-hold buttons).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -15,33 +16,13 @@ const N: usize = 32;
 // the last (re)connect. Without it the joystick never reports at boot — leaving
 // some hosts/games (Forza via DirectInput) reading a phantom stuck button.
 static BASELINE_SENT: AtomicBool = AtomicBool::new(false);
-const PULSE_MS: i64 = 60; // how long a tapped button stays "pressed"
 
 struct Gamepad {
-    mask: u32,            // current button bitmask
-    sent: u32,            // last mask reported to the host
-    release_us: [i64; N], // 0 = not auto-releasing
+    mask: u32, // current button bitmask
+    sent: u32, // last mask reported to the host
 }
 
-static PAD: Mutex<Gamepad> = Mutex::new(Gamepad {
-    mask: 0,
-    sent: 0,
-    release_us: [0; N],
-});
-
-fn now_us() -> i64 {
-    unsafe { sys::esp_timer_get_time() }
-}
-
-/// Momentary press of `btn` (0..31): pressed now, auto-released shortly.
-pub fn pulse(btn: usize) {
-    if btn >= N {
-        return;
-    }
-    let mut p = PAD.lock().unwrap();
-    p.mask |= 1 << btn;
-    p.release_us[btn] = now_us() + PULSE_MS * 1000;
-}
+static PAD: Mutex<Gamepad> = Mutex::new(Gamepad { mask: 0, sent: 0 });
 
 /// Hold/release `btn` explicitly (toggles / press-and-hold widgets).
 pub fn set(btn: usize, pressed: bool) {
@@ -54,11 +35,9 @@ pub fn set(btn: usize, pressed: bool) {
     } else {
         p.mask &= !(1 << btn);
     }
-    p.release_us[btn] = 0; // explicit control cancels any pulse timer
 }
 
-/// Service pulse timers and push a report when the mask changed (or to establish
-/// the post-connect baseline).
+/// Push a report when the mask changed (or to establish the post-connect baseline).
 fn service() {
     // Not enumerated yet: arm the baseline so we re-send once after (re)connect.
     if !unsafe { sys::pith_hid_ready() } {
@@ -67,14 +46,7 @@ fn service() {
     }
     let need_baseline = !BASELINE_SENT.load(Ordering::Relaxed);
     let mask = {
-        let mut p = PAD.lock().unwrap();
-        let now = now_us();
-        for i in 0..N {
-            if p.release_us[i] != 0 && now >= p.release_us[i] {
-                p.mask &= !(1 << i);
-                p.release_us[i] = 0;
-            }
-        }
+        let p = PAD.lock().unwrap();
         // Send when the mask changed, OR once after connect to publish the
         // all-released baseline (so the host never reads a phantom button).
         if p.mask == p.sent && !need_baseline {

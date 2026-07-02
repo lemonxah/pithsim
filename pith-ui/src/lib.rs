@@ -31,7 +31,7 @@ use pith_core::format::{self, Fmt, RuleOp};
 pub use pith_core::format::{Fmt as ValueFmt, Pal, RuleOp as Op};
 use pith_core::registry::{field_def, field_value};
 pub use pith_core::relatives::Relatives;
-use pith_core::shift::{segment_rgb, RevCfg};
+use pith_core::shift::{self, segment_rgb, RevCfg};
 pub use pith_core::shift::CarData;
 use pith_core::simhub::Telemetry;
 
@@ -1024,8 +1024,42 @@ fn paint_node<D: DrawTarget<Color = Rgb565>>(
             paint_relatives(&mut p, &node.rect, *mode, *rows, rel);
             Some(p.finish())
         }
+        // Tall gear+speed widgets split the huge gear glyph and the speed text
+        // into separate cells: at speed the km/h ticks every frame, and without
+        // the split each tick erased + redrew + re-blitted the whole widget —
+        // by far the largest glyph on the screen — for a one-digit change.
+        // Short widgets keep the single-node path (the two texts sit too close
+        // there for per-cell erases not to chew into each other).
+        Kind::GearSpeed { speed: true } if node.rect.h >= 110 => {
+            paint_gear_speed(&mut p, &node.rect, t);
+            Some(p.finish())
+        }
         _ => None,
     }
+}
+
+/// Per-cell gear+speed panel (tall variant only — see the caller). Geometry is
+/// identical to `draw_kind`'s `Kind::GearSpeed { speed: true }` arm; each text
+/// is clipped to its own cell so an erase can never bleed into the other's.
+fn paint_gear_speed<D: DrawTarget<Color = Rgb565>>(p: &mut Painter<D>, r: &Rect, t: &Telemetry) {
+    let (x, y, w, h) = (r.x, r.y, r.w as i32, r.h as i32);
+    let cx = x + w / 2;
+    let split = y + h - 40; // bottom band = speed value + "KM/H" unit
+    let g = if t.gear == 0 { 'N' } else { t.gear as char };
+    let gsz = (h * 5 / 10).clamp(11, 46) as u32;
+    p.cell((x, y, x + w - 1, split - 1), t.gear as u64, |d| {
+        let area = Rectangle::new(Point::new(x, y), Size::new(w.max(0) as u32, (split - y).max(0) as u32));
+        let mut cd = d.clipped(&area);
+        text(&mut cd, &g.to_string(), cx, y + h * 4 / 10, gsz, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
+    });
+    p.cell((x, y + h - 39, x + w - 1, y + h - 14), t.speed_kmh as u64, |d| {
+        let area = Rectangle::new(Point::new(x, y + h - 39), Size::new(w.max(0) as u32, 26));
+        let mut cd = d.clipped(&area);
+        text(&mut cd, &t.speed_kmh.to_string(), cx, y + h - 26, 24, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
+    });
+    p.chrome(|d| {
+        text(d, "KM/H", cx, y + h - 8, 11, pal(Pal::Dim), HorizontalAlignment::Center, VerticalPosition::Center);
+    });
 }
 
 /// Format a gap in ms as `S.s` (relative gaps signed, standings gaps unsigned),
@@ -1114,7 +1148,11 @@ fn layout_draw<D: DrawTarget<Color = Rgb565>>(d: &mut D, r: &Rect, el: &El, t: &
 
 /// Per-node content signature (FNV-1a of the telemetry that affects the node's
 /// pixels). Static kinds hash to a constant so they draw once and never repaint.
-fn node_sig(kind: &Kind, t: &Telemetry, now_ms: i64, active: u32) -> u64 {
+/// The goal is to hash the node's VISUAL state, not its raw inputs — a raw value
+/// change that doesn't move a pixel (a bar whose integer percent is unchanged, a
+/// rev strip where no LED toggled) must NOT dirty the node, or busy telemetry
+/// repaints + re-blits the whole screen every frame for nothing.
+fn node_sig(kind: &Kind, t: &Telemetry, now_ms: i64, active: u32, car: &CarData) -> u64 {
     fn h(vals: &[i64]) -> u64 {
         let mut x: u64 = 0xcbf29ce484222325;
         for &v in vals {
@@ -1127,18 +1165,71 @@ fn node_sig(kind: &Kind, t: &Telemetry, now_ms: i64, active: u32) -> u64 {
     match kind {
         Kind::Panel { .. } | Kind::Label { .. } => 0,
         Kind::Map { .. } => h(&[t.track_pct as i64]),
-        Kind::Stat { field, .. }
-        | Kind::Bar { field, .. }
-        | Kind::Flag { field, .. }
-        | Kind::Value { field, .. } => h(&[fv(*field)]),
+        // Hash the field the draw path actually shows — on VE cars Stat/Value
+        // swap fuel fields for virtual-energy (ve_swap), so hashing the raw
+        // field would leave the swapped value STALE on screen.
+        Kind::Stat { field, .. } | Kind::Value { field, .. } => {
+            let fid = ve_swap(*field, t).map(|(id, ..)| id).unwrap_or(*field as usize);
+            h(&[field_value(t, fid) as i64])
+        }
+        Kind::Flag { field, .. } => h(&[fv(*field)]),
+        // A bar's fill is quantised to integer percent and its colour to the
+        // matched rule band — hash those, not the raw value (an RPM-bound bar
+        // otherwise repaints on every single-RPM tick that moves no pixels).
+        Kind::Bar { field, scale, rules, .. } => {
+            let (fid, scale) = if t.fuel_is_ve != 0 && (*field == 23 || *field == 25) {
+                (87usize, 1000)
+            } else {
+                (*field as usize, *scale)
+            };
+            let raw = field_value(t, fid);
+            let pct = if scale > 0 { (raw * 100 / scale).clamp(0, 100) } else { 0 };
+            let band = rules
+                .iter()
+                .position(|r| r.op.matches(raw, r.threshold))
+                .map(|i| i as i64 + 1)
+                .unwrap_or(0);
+            h(&[pct as i64, band])
+        }
         // include the press/toggle state so a button repaints on press + release
         Kind::Button { field, hid, .. } => {
             let on = if *hid > 0 { (active >> (*hid as u32 - 1)) & 1 } else { 0 };
             h(&[fv(*field), on as i64])
         }
         Kind::GearSpeed { speed } => h(&[t.gear as i64, if *speed { t.speed_kmh as i64 } else { 0 }]),
-        // blink phase keeps the rev strip live
-        Kind::RpmStrip { .. } => h(&[t.rpm as i64, t.max_rpm as i64, t.shift_rpm as i64, now_ms / 80]),
+        // Hash the strip's exact visual state (which LEDs are lit + the flash
+        // phase, from the same math segment_rgb draws with). The old sig hashed
+        // raw rpm + a free-running 80 ms tick, so every strip repainted 12×/s
+        // even parked in the pits with the engine off.
+        Kind::RpmStrip { count } => {
+            let seg = if *count == 0 { 12 } else { (*count as i32).clamp(1, 48) };
+            if car.valid {
+                let gi = shift::gear_index(t.gear);
+                let rl = car.redline[gi] as i32;
+                let over = rl > 0 && t.rpm >= rl;
+                let mut mask: i64 = 0;
+                for i in 0..car.led_count.min(shift::CAR_LED_MAX) {
+                    if car.thresh[gi][i] > 0 && t.rpm >= car.thresh[gi][i] as i32 {
+                        mask |= 1 << i;
+                    }
+                }
+                let phase = match (over, car.blink_ms) {
+                    (false, _) => 0,
+                    (true, 0) => 1, // hold solid at redline (no strobe)
+                    (true, ms) => 2 + ((now_ms / ms as i64) & 1),
+                };
+                h(&[mask, phase, seg as i64])
+            } else {
+                let cfg = RevCfg::default();
+                let shift = shift::shift_rpm_of(t);
+                let start = shift * cfg.start_pct as i32 / 100;
+                let span = shift - start;
+                let lit = if span > 0 { ((t.rpm - start) * seg / span).clamp(0, seg) } else { 0 };
+                let flashing = shift > 0 && t.rpm * 100 / shift >= cfg.flash_pct as i32;
+                let phase = if flashing { 1 + ((now_ms / shift::FLASH_MS) & 1) } else { 0 };
+                h(&[lit as i64, phase, seg as i64])
+            }
+        }
         Kind::TyreGrid => h(&[t.tt_avg_fl as i64, t.tt_avg_fr as i64, t.tt_avg_rl as i64, t.tt_avg_rr as i64]),
         Kind::TyrePanel => h(&[
             t.tt_fl_i as i64, t.tt_fl_m as i64, t.tt_fl_o as i64,
@@ -1155,7 +1246,7 @@ fn node_sig(kind: &Kind, t: &Telemetry, now_ms: i64, active: u32) -> u64 {
         Kind::Sectors => h(&[t.s1_ms as i64, t.s2_ms as i64, t.s3_ms as i64, t.bs1_ms as i64, t.bs2_ms as i64, t.bs3_ms as i64]),
         Kind::LapPair => h(&[t.cur_lap_ms as i64, t.best_lap_ms as i64]),
         Kind::Position { .. } => h(&[t.position as i64, t.field_size as i64]),
-        Kind::Widget(el) => el_sig(el, t, now_ms),
+        Kind::Widget(el) => el_sig(el, t, now_ms, car),
         // Relatives data rides a side channel node_sig can't see; repaint on a
         // ~4 Hz tick so live gaps refresh without threading the list in here.
         Kind::Relatives { mode, rows } => h(&[*mode as i64, *rows as i64, now_ms / 250]),
@@ -1164,20 +1255,20 @@ fn node_sig(kind: &Kind, t: &Telemetry, now_ms: i64, active: u32) -> u64 {
 
 /// Combine the signatures of an element tree (so a composed widget repaints iff
 /// any of its leaves' telemetry changed).
-fn el_sig(el: &El, t: &Telemetry, now_ms: i64) -> u64 {
+fn el_sig(el: &El, t: &Telemetry, now_ms: i64, car: &CarData) -> u64 {
     fn mix(a: u64, b: u64) -> u64 {
         (a ^ b).wrapping_mul(0x100000001b3)
     }
     match el {
-        El::Leaf(k) => node_sig(k, t, now_ms, 0),
-        El::Stack { children, .. } => children.iter().fold(0, |a, c| mix(a, el_sig(c, t, now_ms))),
+        El::Leaf(k) => node_sig(k, t, now_ms, 0, car),
+        El::Stack { children, .. } => children.iter().fold(0, |a, c| mix(a, el_sig(c, t, now_ms, car))),
         El::Row { children, .. } | El::Col { children, .. } => {
-            children.iter().fold(0, |a, s| mix(a, el_sig(&s.el, t, now_ms)))
+            children.iter().fold(0, |a, s| mix(a, el_sig(&s.el, t, now_ms, car)))
         }
         El::Tabs { active, pages, .. } => {
             let base = mix(0x9e3779b9, *active as u64);
             match pages.get(*active as usize) {
-                Some(p) => mix(base, el_sig(p, t, now_ms)),
+                Some(p) => mix(base, el_sig(p, t, now_ms, car)),
                 None => base,
             }
         }
@@ -1297,10 +1388,10 @@ pub fn render_screen_dirty<D: DrawTarget<Color = Rgb565>>(
                     Some((a0, b0, a1, b1)) => (a0.min(d2.0), b0.min(d2.1), a1.max(d2.2), b1.max(d2.3)),
                 });
             }
-            cache.sigs[i] = node_sig(&node.kind, t, now_ms, active);
+            cache.sigs[i] = node_sig(&node.kind, t, now_ms, active, car);
             continue;
         }
-        let sig = node_sig(&node.kind, t, now_ms, active);
+        let sig = node_sig(&node.kind, t, now_ms, active, car);
         if full || cache.sigs[i] != sig {
             let r = &node.rect;
             if !full {
@@ -1436,7 +1527,7 @@ pub fn render_tabbed_dirty<D: DrawTarget<Color = Rgb565>>(
             if paint_node(d, node, t, rel, &mut cache.cells[i], rects, true, pal(s.bg), s.w as i32, s.h as i32).is_none() {
                 draw_kind(d, &node.rect, &node.kind, t, now_ms, pressed, car, rel);
             }
-            cache.sigs[i] = node_sig(&node.kind, t, now_ms, pressed);
+            cache.sigs[i] = node_sig(&node.kind, t, now_ms, pressed, car);
         }
         let whole = (0, 0, s.w as i32 - 1, s.h as i32 - 1);
         rects.push(whole);
@@ -1460,10 +1551,10 @@ pub fn render_tabbed_dirty<D: DrawTarget<Color = Rgb565>>(
                     Some((a0, b0, a1, b1)) => (a0.min(d2.0), b0.min(d2.1), a1.max(d2.2), b1.max(d2.3)),
                 });
             }
-            cache.sigs[i] = node_sig(&node.kind, t, now_ms, pressed);
+            cache.sigs[i] = node_sig(&node.kind, t, now_ms, pressed, car);
             continue;
         }
-        let sig = node_sig(&node.kind, t, now_ms, pressed);
+        let sig = node_sig(&node.kind, t, now_ms, pressed, car);
         if cache.sigs[i] != sig {
             let r = &node.rect;
             fill_rect(d, r.x, r.y, r.w as i32, r.h as i32, pal(s.bg));

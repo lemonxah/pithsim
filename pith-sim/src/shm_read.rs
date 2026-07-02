@@ -60,18 +60,27 @@ pub fn read_once() -> Option<ShmRead> {
         ("acevo_pmf_physics", "acevo_pmf_graphics", "acevo_pmf_static", "AC EVO (shm)"),
         ("acpmf_physics", "acpmf_graphics", "acpmf_static", "AC/ACC (shm)"),
     ] {
+        let evo = label == "AC EVO (shm)";
         if let Some(pb) = read(phys) {
             if let Some(mut t) = crate::shm::parse_ac_physics(&pb) {
-                if let Some(gb) = read(graph) {
-                    crate::shm::apply_acc_graphics(&mut t, &gb);
+                let gb = read(graph);
+                // The ACC graphics offsets are ACC-only — EVO's
+                // SPageFileGraphicEvo is a different struct (narrow chars,
+                // driver/car strings @3020+), so applying them there read junk.
+                if !evo {
+                    if let Some(gb) = &gb {
+                        crate::shm::apply_acc_graphics(&mut t, gb);
+                    }
                 }
-                // Static-page identity is AC/ACC only (EVO's layout differs).
-                let (car, track) = if label == "AC/ACC (shm)" {
+                let (car, track) = if evo {
+                    crate::shm::acevo_identity(
+                        &read(stat).unwrap_or_default(),
+                        &gb.unwrap_or_default(),
+                    )
+                } else {
                     read(stat)
                         .map(|sb| crate::shm::ac_static_identity(&sb))
                         .unwrap_or((None, None))
-                } else {
-                    (None, None)
                 };
                 return Some(ShmRead { telem: t, label, car, track, debug: None });
             }

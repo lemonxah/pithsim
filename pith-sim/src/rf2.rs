@@ -30,10 +30,14 @@ pub mod telem_off {
     pub const ENGINE_RPM: usize = 356; // mEngineRPM (double)
     pub const ENGINE_WATER_TEMP: usize = 364; // mEngineWaterTemp (double, °C)
     pub const ENGINE_OIL_TEMP: usize = 372; // mEngineOilTemp (double, °C)
-    pub const FILTERED_THROTTLE: usize = 388; // mFilteredThrottle (double, 0..1)
-    pub const FILTERED_BRAKE: usize = 396; // mFilteredBrake (double, 0..1)
+    // Raw driver inputs. Per rF2State.h the block at 388..420 is the
+    // UNFILTERED set (mUnfilteredThrottle/Brake/Steering/Clutch); the filtered
+    // set follows at 420..452. These offsets always read the unfiltered ones —
+    // earlier names said "FILTERED", contradicting the header.
+    pub const UNFILTERED_THROTTLE: usize = 388; // mUnfilteredThrottle (double, 0..1)
+    pub const UNFILTERED_BRAKE: usize = 396; // mUnfilteredBrake (double, 0..1)
     pub const UNFILTERED_STEERING: usize = 404; // mUnfilteredSteering (double, -1..1)
-    pub const FILTERED_CLUTCH: usize = 412; // mFilteredClutch (double, 0..1)
+    pub const UNFILTERED_CLUTCH: usize = 412; // mUnfilteredClutch (double, 0..1)
     pub const FUEL: usize = 524; // mFuel (double, litres)
     pub const MAX_RPM: usize = 532; // mEngineMaxRPM (double)
     pub const HEADLIGHTS: usize = 543; // mHeadlights (u8)
@@ -109,16 +113,16 @@ impl<'a> VehicleTelem<'a> {
         self.f64(telem_off::ENGINE_OIL_TEMP)
     }
     pub fn throttle(&self) -> f64 {
-        self.f64(telem_off::FILTERED_THROTTLE)
+        self.f64(telem_off::UNFILTERED_THROTTLE)
     }
     pub fn brake(&self) -> f64 {
-        self.f64(telem_off::FILTERED_BRAKE)
+        self.f64(telem_off::UNFILTERED_BRAKE)
     }
     pub fn steering(&self) -> f64 {
         self.f64(telem_off::UNFILTERED_STEERING)
     }
     pub fn clutch(&self) -> f64 {
-        self.f64(telem_off::FILTERED_CLUTCH)
+        self.f64(telem_off::UNFILTERED_CLUTCH)
     }
     pub fn fuel(&self) -> f64 {
         self.f64(telem_off::FUEL)

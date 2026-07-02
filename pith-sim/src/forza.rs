@@ -10,8 +10,14 @@
 //! | 232      | Sled (v1)                           | no        | —         |
 //! | 311      | FM7 "Car Dash"                      | yes       | +0        |
 //! | 331      | Forza Motorsport 2023 "Data Out V2" | yes       | +0        |
-//! | 323/324  | Forza Horizon 4 / 5                  | yes       | +12       |
-//! | other ≥323 | Forza Horizon 6 (+ future Horizon)| yes       | +12       |
+//! | 323/324  | Forza Horizon 4 / 5 / 6               | yes       | +12       |
+//!
+//! There is deliberately no open-ended `len >= 323` catch-all: an unbounded
+//! length-only match here would swallow every OTHER decoder's larger packets
+//! before they get a chance to run (PCARS2/AMS2 is 559 bytes, F1 23-25's
+//! multi-car packets are 1200+ bytes — both comfortably clear 323 and would
+//! get misidentified as Forza with garbage field values). A confirmed future
+//! Horizon title gets its own explicit length arm, same as every entry above.
 //!
 //! The Horizon family inserts a 12-byte block (CarGroup / SmashableVelDiff /
 //! SmashableMass) between the Sled and the dash section, so every dash field
@@ -50,8 +56,7 @@ impl GameDecoder for ForzaDecoder {
             232 => (false, 0usize),
             311 => (true, 0),
             331 => (true, 0),
-            323 | 324 => (true, 12),
-            n if n >= 323 => (true, 12), // Forza Horizon 6 + future Horizon titles
+            323 | 324 => (true, 12), // FH4/5/6 — 324 confirmed for FH6's "Data Out"
             _ => return None,
         };
         // Need the full Sled at minimum.
@@ -188,6 +193,15 @@ mod tests {
     #[test]
     fn rejects_unknown_length() {
         assert!(ForzaDecoder.decode(&[0u8; 64]).is_none());
+    }
+
+    /// Regression: an open-ended `len >= 323` arm used to swallow every larger
+    /// game's packets (F1's multi-car packets, PCARS2/AMS2's 559-byte packet)
+    /// before their own decoders ran, misreporting them as Forza Horizon 6.
+    #[test]
+    fn rejects_oversized_non_forza_packets() {
+        assert!(ForzaDecoder.decode(&[0u8; 559]).is_none()); // PCARS2/AMS2
+        assert!(ForzaDecoder.decode(&[0u8; 1349]).is_none()); // F1 CarTelemetry (22 cars)
     }
 
     #[test]

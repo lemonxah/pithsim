@@ -41,8 +41,37 @@ jobs:
           path: firmware/pithddu-xiao_s3.bin
           if-no-files-found: error
 
+  # The factory recovery app (BIOS/rescue console). Built on every push so a
+  # change that breaks it is caught in CI, not at the next full device flash.
+  recovery:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: pith-recovery
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the esp Rust toolchain
+        uses: esp-rs/xtensa-toolchain@v1.5
+        with:
+          default: true
+          buildtargets: esp32s3
+          ldproxy: true
+      - name: Install espflash
+        run: cargo install espflash --locked
+      - name: Build (release)
+        run: cargo build --release
+      - name: Save app image
+        run: |
+          espflash save-image --chip esp32s3 \
+            target/xtensa-esp32s3-espidf/release/pith-recovery pith-recovery-xiao_s3.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recovery-xiao_s3
+          path: pith-recovery/pith-recovery-xiao_s3.bin
+          if-no-files-found: error
+
   release:
-    needs: [firmware]
+    needs: [firmware, recovery]
     if: startsWith(github.ref, 'refs/tags/firmware-v')
     runs-on: ubuntu-latest
     permissions:
@@ -54,7 +83,8 @@ jobs:
       - name: Publish firmware release
         uses: softprops/action-gh-release@v2
         with:
-          # Bare per-board app image the dashboard installs by board name.
+          # Bare per-board app images: the main firmware the dashboard installs
+          # by board name, plus the factory recovery image for full flashes.
           files: dist/**/*.bin
           generate_release_notes: true
           fail_on_unmatched_files: true

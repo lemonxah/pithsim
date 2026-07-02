@@ -1,0 +1,4 @@
+dependencies:
+  # Raw TinyUSB (NOT espressif/esp_tinyusb — its wrapper can't be bindgen'd here).
+  # Same version pin as the main firmware's pith_usb shim.
+  espressif/tinyusb: "~0.19.0"

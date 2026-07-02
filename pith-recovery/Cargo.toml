@@ -40,3 +40,10 @@ embuild = "0.33"
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/led_strip", version = "~2.5.5" }
 bindings_header = "src/led_strip_bindings.h"
+
+# USB mass storage (read-only RAM disk of the NVS blobs) for the "Mount as USB
+# drive" recovery-menu option. Thin C shim over raw TinyUSB, like the main
+# firmware's pith_usb.
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/pith_msc"]
+bindings_header = "components/pith_msc/include/pith_msc.h"

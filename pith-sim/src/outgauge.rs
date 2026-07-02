@@ -43,6 +43,9 @@ impl GameDecoder for OutGaugeDecoder {
         t.water_c = le::f32(b, 24).round() as i32; // EngTemp
         t.oil_c = le::f32(b, 36).round() as i32; // OilTemp
         // ShowLights (DL_* bits) @44: FULLBEAM=2, PITSPEED=8, TC=16, ABS=1024.
+        // CAVEATS (InSim.txt): DL_TC/DL_ABS light when the aid is active OR
+        // switched off — not a pure live-intervention signal in LFS. BeamNG
+        // emits this struct too but never sets DL_PITSPEED.
         let dl = le::u32(b, 44);
         t.headlights = (dl & 0x0002 != 0) as i32;
         t.pit_limiter = (dl & 0x0008 != 0) as i32;

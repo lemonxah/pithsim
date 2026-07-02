@@ -22,6 +22,8 @@ pub const REQUEST_TRACK_DATA: u8 = 11;
 const REGISTRATION_RESULT: u8 = 1;
 const REALTIME_UPDATE: u8 = 2;
 const REALTIME_CAR_UPDATE: u8 = 3;
+const ENTRY_LIST_CAR: u8 = 6;
+const TRACK_DATA: u8 = 5;
 
 const INVALID_LAP: i32 = i32::MAX; // sentinel for "no time"
 
@@ -61,11 +63,18 @@ pub enum AccMsg {
     Realtime { focused_car_index: i32 },
     /// Per-car update for `car_index`.
     Car(CarUpdate),
+    /// One entry-list car: index + display name (driver surname, else team) +
+    /// race number — feeds the relatives/standings widget's labels.
+    EntryCar { car_index: i32, name: String, race_number: i32 },
+    /// Track info: name + length in meters (needed to turn spline positions
+    /// into on-track gaps).
+    Track { name: String, meters: i32 },
     /// A message type we don't act on.
     Other,
 }
 
 /// The fields we extract from a RealtimeCarUpdate.
+#[derive(Clone)]
 pub struct CarUpdate {
     pub car_index: i32,
     pub gear: i32, // -1 = R, 0 = N, 1.. forward
@@ -80,6 +89,14 @@ pub struct CarUpdate {
     pub last_ms: i32,
     pub cur_ms: i32,
     pub sectors: [i32; 3],
+    /// CarLocationEnum: 0 none, 1 track, 2 pitlane, 3 pit entry, 4 pit exit.
+    pub location: u8,
+}
+
+impl CarUpdate {
+    pub fn in_pits(&self) -> bool {
+        matches!(self.location, 2..=4)
+    }
 }
 
 /// Parse one inbound datagram.
@@ -109,11 +126,19 @@ pub fn parse(b: &[u8]) -> Option<AccMsg> {
             let car_index = c.u16()? as i32;
             c.skip(2)?; // driverIndex
             c.skip(1)?; // driverCount
-            let gear = c.u8()? as i32 - 1; // raw: 0=R,1=N,2=1st… → bias R=-1, N=0
+            // Gear bias: LIVE ACC (verified in-game 2026-07: with -2 every gear
+            // displayed one LOW — 1st showed N, N showed R) sends the shm-style
+            // encoding raw 0=R, 1=N, 2=1st → decode raw-1. NOTE the official
+            // ksBroadcastingNetwork client source says `ReadByte() - 2` ("-2
+            // makes the R -1, N 0"), which contradicts what the shipping game
+            // actually emits — trust the live packet, not the SDK mirror. If
+            // gear ever reads one HIGH here, capture the raw byte before
+            // changing this again.
+            let gear = c.u8()? as i32 - 1;
             let world_x = c.f32()?;
             let world_y = c.f32()?;
             c.skip(4)?; // yaw f32
-            c.skip(1)?; // carLocation
+            let location = c.u8()?; // carLocation (pit detection for relatives)
             let kmh = c.u16()? as i32;
             let position = c.u16()? as i32;
             c.skip(2)?; // cupPosition
@@ -138,7 +163,40 @@ pub fn parse(b: &[u8]) -> Option<AccMsg> {
                 last_ms,
                 cur_ms,
                 sectors,
+                location,
             }))
+        }
+        ENTRY_LIST_CAR => {
+            // carIndex u16, carModelType u8, teamName str, raceNumber i32,
+            // cupCategory u8, currentDriverIndex u8, nationality u16,
+            // driverCount u8, then per driver: first/last/short str + cat u8 +
+            // nationality u16. Label = first driver's last name, else team.
+            let car_index = c.u16()? as i32;
+            c.skip(1)?; // carModelType
+            let team = c.str()?;
+            let race_number = c.i32()?;
+            c.skip(1)?; // cupCategory
+            c.skip(1)?; // currentDriverIndex
+            c.skip(2)?; // nationality
+            let drivers = c.u8()?;
+            let mut name = String::new();
+            if drivers > 0 {
+                let _first = c.str()?;
+                let last = c.str()?;
+                let _short = c.str()?;
+                name = last;
+            }
+            if name.trim().is_empty() {
+                name = team;
+            }
+            Some(AccMsg::EntryCar { car_index, name: name.trim().to_string(), race_number })
+        }
+        TRACK_DATA => {
+            c.skip(4)?; // connectionId
+            let name = c.str()?;
+            c.skip(4)?; // trackId
+            let meters = c.i32()?;
+            Some(AccMsg::Track { name, meters })
         }
         _ => Some(AccMsg::Other),
     }
@@ -173,6 +231,12 @@ impl<'a> Cur<'a> {
     fn f32(&mut self) -> Option<f32> {
         let s = self.take(4)?;
         Some(f32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    }
+    /// Protocol string: u16 length + UTF-8 bytes.
+    fn str(&mut self) -> Option<String> {
+        let n = self.u16()? as usize;
+        let s = self.take(n)?;
+        Some(String::from_utf8_lossy(s).into_owned())
     }
     /// Read a Lap struct, returning (laptimeMs with sentinel→0, up to 3 sector ms).
     fn lap(&mut self) -> Option<(i32, [i32; 3])> {
@@ -224,7 +288,7 @@ mod tests {
         b.extend_from_slice(&7u16.to_le_bytes()); // carIndex
         b.extend_from_slice(&0u16.to_le_bytes()); // driverIndex
         b.push(1); // driverCount
-        b.push(5); // gear byte → 5-1 = 4
+        b.push(5); // gear byte → 5-1 = 4 (live game sends shm-style gear+1)
         b.extend_from_slice(&10.0f32.to_le_bytes()); // worldX
         b.extend_from_slice(&20.0f32.to_le_bytes()); // worldY
         b.extend_from_slice(&0.0f32.to_le_bytes()); // yaw

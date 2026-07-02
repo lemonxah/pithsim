@@ -332,9 +332,23 @@ pub fn render_no_screen<D: DrawTarget<Color = Rgb565>>(d: &mut D) {
 // A settings-cog affordance in the BOTTOM-LEFT opens the on-device config screen.
 pub const CONFIG_HOTSPOT: (i32, i32, i32, i32) = (0, H - 56, 86, 56);
 pub const SLD: (i32, i32, i32, i32) = (40, 205, 400, 36);    // brightness slider (below the info block)
-pub const SIM_BTN: (i32, i32, i32, i32) = (288, 62, 172, 46); // right column, top
-pub const RBT_BTN: (i32, i32, i32, i32) = (288, 116, 172, 46);// right column, below SIM
+pub const SIM_BTN: (i32, i32, i32, i32) = (288, 56, 172, 42); // right column, top
+pub const RBT_BTN: (i32, i32, i32, i32) = (288, 104, 172, 42);// right column, below SIM
+pub const SLP_BTN: (i32, i32, i32, i32) = (288, 152, 172, 42);// right column, sleep now
+pub const SLP_TO_BTN: (i32, i32, i32, i32) = (40, 140, 200, 36); // auto-sleep timeout cycler (left, under info)
 pub const BACK_BTN: (i32, i32, i32, i32) = (20, 262, 60, 46); // bottom-left back-arrow icon
+
+/// Auto-sleep timeout choices (seconds; 0 = never). Tapping the config-screen
+/// button steps to the next one.
+pub const SLEEP_PRESETS: [u16; 7] = [0, 15, 30, 60, 120, 300, 600];
+
+pub fn sleep_label(secs: u16) -> String {
+    match secs {
+        0 => "OFF".into(),
+        s if s < 60 => format!("{s}S"),
+        s => format!("{}M", s / 60),
+    }
+}
 
 /// Stats shown on the device config screen.
 pub struct ConfigInfo<'a> {
@@ -346,6 +360,7 @@ pub struct ConfigInfo<'a> {
     pub uptime_s: i64,
     pub brightness: u8,
     pub sim: bool,
+    pub sleep_timeout_s: u16,
 }
 
 /// A small settings-cog affordance in the race panel's BOTTOM-LEFT corner so the
@@ -399,6 +414,12 @@ pub fn render_config<D: DrawTarget<Color = Rgb565>>(d: &mut D, info: &ConfigInfo
     text(d, &line3, 40, 110, 12, pal(Pal::Dim), HorizontalAlignment::Left, VerticalPosition::Center);
     text(d, &line4, 40, 128, 12, pal(Pal::Dim), HorizontalAlignment::Left, VerticalPosition::Center);
 
+    // auto-sleep timeout cycler (tap to step through the presets)
+    fill_round(d, SLP_TO_BTN.0, SLP_TO_BTN.1, SLP_TO_BTN.2, SLP_TO_BTN.3, 6, pal(Pal::Panel));
+    text(d, &format!("AUTO SLEEP: {}", sleep_label(info.sleep_timeout_s)),
+         SLP_TO_BTN.0 + SLP_TO_BTN.2 / 2, SLP_TO_BTN.1 + SLP_TO_BTN.3 / 2, 13,
+         pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
+
     let b = info.brightness;
     text(d, "SHIFT LED BRIGHTNESS", SLD.0, SLD.1 - 18, 12, pal(Pal::Dim), HorizontalAlignment::Left, VerticalPosition::Center);
     fill_round(d, SLD.0, SLD.1, SLD.2, SLD.3, 6, pal(Pal::Panel));
@@ -409,6 +430,8 @@ pub fn render_config<D: DrawTarget<Color = Rgb565>>(d: &mut D, info: &ConfigInfo
     text(d, if info.sim { "SIM: ON" } else { "RUN SIM" }, SIM_BTN.0 + SIM_BTN.2 / 2, SIM_BTN.1 + SIM_BTN.3 / 2, 14, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
     fill_round(d, RBT_BTN.0, RBT_BTN.1, RBT_BTN.2, RBT_BTN.3, 6, pal(Pal::Red));
     text(d, "RESTART", RBT_BTN.0 + RBT_BTN.2 / 2, RBT_BTN.1 + RBT_BTN.3 / 2, 14, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
+    fill_round(d, SLP_BTN.0, SLP_BTN.1, SLP_BTN.2, SLP_BTN.3, 6, pal(Pal::Panel));
+    text(d, "SLEEP NOW", SLP_BTN.0 + SLP_BTN.2 / 2, SLP_BTN.1 + SLP_BTN.3 / 2, 14, pal(Pal::White), HorizontalAlignment::Center, VerticalPosition::Center);
 }
 
 pub fn render_ota<D: DrawTarget<Color = Rgb565>>(d: &mut D, pct: i32) {

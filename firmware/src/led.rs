@@ -30,7 +30,17 @@ fn now_ms() -> i64 {
 }
 
 /// Parse + apply a lovely-car-data JSON (@C / @SL). Returns false if invalid.
+/// An empty object (`{}`) — or empty payload — CLEARS the loaded car so the
+/// strip falls back to the generic rev bar driven by the telemetry's
+/// shift/max RPM (the dashboard sends this when the running game has no
+/// matching car profile; without it a stale car from a previous game keeps
+/// thresholds the new game's cars may never reach, i.e. dead shift lights).
 pub fn apply_car_json(json: &str) -> bool {
+    let t = json.trim();
+    if t.is_empty() || t == "{}" {
+        *CAR.lock().unwrap() = None;
+        return true;
+    }
     match parse_car(json) {
         Some(c) => {
             *CAR.lock().unwrap() = Some(c);
@@ -258,6 +268,12 @@ pub fn spawn() {
             }
             selftest(&strip);
             loop {
+                if state::SLEEPING.load(std::sync::atomic::Ordering::Relaxed) {
+                    strip.clear();
+                    strip.refresh();
+                    thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
                 update(&strip);
                 thread::sleep(Duration::from_millis(33));
             }

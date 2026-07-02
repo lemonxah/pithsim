@@ -60,6 +60,23 @@ static LOG_TX: Mutex<HidTx> = Mutex::new(HidTx {
 /// Latest parsed telemetry (written here, read by the LED/UI tasks later).
 pub static TELEM: Mutex<Telemetry> = Mutex::new(telem_zero());
 
+/// esp_timer ms of the last telemetry frame (real or sim). The display task's
+/// sleep mode keys off this: no frames + no touch for the configured timeout
+/// puts the screens to sleep; a fresh frame wakes them. Mutex (not atomic):
+/// Xtensa has no native 64-bit atomics.
+static LAST_TELEM_MS: Mutex<i64> = Mutex::new(0);
+
+/// Stamp the last-telemetry clock with "now". Called on every parsed `$` frame
+/// and by the bench-sim generator.
+pub fn note_telem() {
+    *LAST_TELEM_MS.lock().unwrap() = unsafe { sys::esp_timer_get_time() / 1000 };
+}
+
+/// esp_timer ms of the most recent telemetry frame (0 = none since boot).
+pub fn last_telem_ms() -> i64 {
+    *LAST_TELEM_MS.lock().unwrap()
+}
+
 // const-fn zero so TELEM can be a `static Mutex` initializer.
 const fn telem_zero() -> Telemetry {
     // SAFETY-free: all fields are integers; build a zeroed Telemetry. We can't
@@ -351,6 +368,7 @@ pub fn ingest_telem_line(line: &str) {
         if !crate::state::with(|s| s.sim_on) {
             *TELEM.lock().unwrap() = tel;
         }
+        note_telem(); // keeps/wakes the screens even while sim overrides the data
         crate::state::with(|s| s.frames_ok += 1);
     } else {
         crate::state::with(|s| s.frames_bad += 1);

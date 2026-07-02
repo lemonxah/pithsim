@@ -5,34 +5,24 @@
 //! renders, Phase 5). Guarded by a single Mutex since both the USB task and the
 //! CDC poll loop dispatch commands.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Mutex, OnceLock};
 
-use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
+use esp_idf_svc::nvs::{EspCustomNvsPartition, EspDefaultNvsPartition, EspNvs, NvsCustom, NvsDefault};
 use serde::{Deserialize, Serialize};
 
 const NS: &str = "dash";
 
-/// Consecutive incomplete boots that force the on-device recovery (BIOS). The
-/// counter is bumped before the risky init ([`boot_attempt_begin`]) and cleared
-/// once we've run stably ([`boot_mark_ok`]); a crash before that leaves it bumped,
-/// so a wedged image climbs here instead of silently rolling back forever.
-pub const SAFE_MODE_THRESHOLD: u8 = 3;
-
-/// Set when the boot-loop guard trips or the user picks Safe boot: the display task
-/// skips the (suspect) saved layout and the main loop stops auto-clearing the
-/// boot-fail counter, so the failure stays visible until the user resolves it.
-static SAFE_MODE: AtomicBool = AtomicBool::new(false);
-pub fn safe_mode() -> bool {
-    SAFE_MODE.load(Ordering::Relaxed)
-}
-pub fn set_safe_mode(on: bool) {
-    SAFE_MODE.store(on, Ordering::Relaxed);
-}
+/// True while the display task has the device in sleep mode (screens dark).
+/// The LED task reads this to blank the shift-light strip for the duration.
+pub static SLEEPING: AtomicBool = AtomicBool::new(false);
 
 /// Bump the persisted consecutive-boot-fail counter and return the new value. Call
 /// once at boot, before the risky init. [`boot_mark_ok`] resets it after we've run
-/// stably; `>= SAFE_MODE_THRESHOLD` means the last boots all crashed → force BIOS.
+/// stably; a crash before that leaves it bumped, so the RECOVERY app (which boots
+/// first and reads `bootfail` from the shared namespace) can show "previous boot
+/// failed Nx" and offer the layout wipe. All safe-mode UX lives in pith-recovery —
+/// the old in-app BIOS helpers were removed with it.
 pub fn boot_attempt_begin() -> u8 {
     with(|s| {
         let Some(nvs) = s.nvs.as_ref() else { return 1 };
@@ -44,17 +34,6 @@ pub fn boot_attempt_begin() -> u8 {
             .saturating_add(1);
         let _ = nvs.set_u8("bootfail", n);
         n
-    })
-}
-
-/// The current persisted boot-fail counter (post-increment for this boot). The
-/// display task subtracts 1 to show how many *previous* boots failed.
-pub fn boot_fail_count() -> u8 {
-    with(|s| {
-        s.nvs
-            .as_ref()
-            .and_then(|n| n.get_u8("bootfail").ok().flatten())
-            .unwrap_or(0)
     })
 }
 
@@ -79,33 +58,6 @@ pub fn boot_mark_ok() {
                 let _ = nvs.set_u8("bootfail", 0);
             }
         }
-    })
-}
-
-/// Wipe the saved on-device layout (the suspect blob after a boot loop) so the next
-/// boot comes up clean. Empties the NVS keys + the in-memory copies and bumps
-/// ui_ver so the display task drops its render caches.
-pub fn reset_layout() {
-    with(|s| {
-        s.set_str("uijson", "");
-        s.set_str("racejson", "");
-        s.set_str("edjson", "");
-        s.ui_json.clear();
-        s.race_json.clear();
-        s.editor_json.clear();
-        s.pending_ui = None;
-        s.ui_doc = None;
-        s.ui_ver = s.ui_ver.wrapping_add(1);
-    })
-}
-
-/// Drop the active layout for THIS session only (in-memory), leaving NVS intact —
-/// used by Safe boot so the suspect doc isn't parsed/rendered this run but survives
-/// a later normal boot.
-pub fn forget_session_layout() {
-    with(|s| {
-        s.pending_ui = None;
-        s.ui_doc = None;
     })
 }
 
@@ -151,8 +103,17 @@ impl Default for DevicePins {
     }
 }
 
+/// Keys routed to the big `nvsblob` partition (384 KB in the flash tail): the
+/// JSON blobs that together can overflow the 24 KB default `nvs`. Reads fall
+/// back to the default partition so data saved before the partition existed
+/// (or on devices not yet re-flashed with the new table) still loads.
+const BLOB_KEYS: &[&str] = &["uijson", "edjson", "racejson", "carjson", "profjson", "buttonsjson"];
+
 pub struct AppState {
     nvs: Option<EspNvs<NvsDefault>>,
+    /// Big-blob partition (`nvsblob`) — `None` on devices flashed with the old
+    /// partition table; everything then behaves exactly as before.
+    nvs_blob: Option<EspNvs<NvsCustom>>,
     pub pins: DevicePins,
     pub race_json: String,    // last @RS push (echoed by @RG)
     pub ui_doc: Option<pith_ui::UiDoc>, // active pith-ui layout (@UI)
@@ -167,6 +128,9 @@ pub struct AppState {
     pub car_json: String,     // last @C / @SL push
     pub button_pages: u8,
     pub brightness: u8,       // 0..100
+    /// Auto-sleep timeout in seconds (0 = never): no telemetry and no touch for
+    /// this long turns the screens + LEDs off until woken. Set on the config screen.
+    pub sleep_timeout_s: u16,
     pub car_model: String,    // from @CM
     pub relatives: pith_ui::Relatives, // from @REL (multi-car standings/relatives)
     pub frames_ok: u32,
@@ -191,9 +155,16 @@ pub fn init() {
     let nvs = EspDefaultNvsPartition::take()
         .ok()
         .and_then(|part| EspNvs::new(part, NS, true).ok());
+    let nvs_blob = EspCustomNvsPartition::take("nvsblob")
+        .ok()
+        .and_then(|part| EspNvs::new(part, NS, true).ok());
+    if nvs_blob.is_none() {
+        log::info!("nvsblob partition absent (old table) — large blobs use default nvs");
+    }
 
     let mut s = AppState {
         nvs,
+        nvs_blob,
         pins: DevicePins::default(),
         race_json: String::new(),
         ui_doc: None,
@@ -206,6 +177,7 @@ pub fn init() {
         car_json: String::new(),
         button_pages: 0,
         brightness: 43, // ~DEFAULT_BRIGHT (110/255)
+        sleep_timeout_s: 30,
         car_model: String::new(),
         relatives: pith_ui::Relatives::default(),
         frames_ok: 0,
@@ -234,10 +206,19 @@ pub fn with<R>(f: impl FnOnce(&mut AppState) -> R) -> R {
 
 impl AppState {
     fn get_str_owned(&self, key: &str) -> Option<String> {
-        let nvs = self.nvs.as_ref()?;
         // Stored as a blob (not str): NVS strings are capped at ~4000 bytes, which a
         // real freeform layout / editor blob blows past. Blobs span pages.
         let mut buf = vec![0u8; 32768];
+        // Blob-routed keys prefer the big partition; fall back to the default
+        // one so pre-partition data (or an old-table device) still loads.
+        if BLOB_KEYS.contains(&key) {
+            if let Some(blob) = self.nvs_blob.as_ref() {
+                if let Ok(Some(data)) = blob.get_raw(key, &mut buf) {
+                    return String::from_utf8(data.to_vec()).ok();
+                }
+            }
+        }
+        let nvs = self.nvs.as_ref()?;
         match nvs.get_raw(key, &mut buf) {
             Ok(Some(data)) => String::from_utf8(data.to_vec()).ok(),
             _ => None,
@@ -245,9 +226,24 @@ impl AppState {
     }
 
     fn set_str(&mut self, key: &str, val: &str) {
+        // Blob, not str (see get_str_owned). Log failures — a full NVS partition
+        // would otherwise silently drop the layout and boot to factory defaults.
+        if BLOB_KEYS.contains(&key) {
+            if let Some(blob) = self.nvs_blob.as_mut() {
+                match blob.set_raw(key, val.as_bytes()) {
+                    Ok(_) => {
+                        // Migrated: retire the copy in the small default nvs so
+                        // it stops eating the 24 KB settings partition.
+                        if let Some(nvs) = self.nvs.as_mut() {
+                            let _ = nvs.remove(key);
+                        }
+                    }
+                    Err(e) => log::warn!("nvsblob set '{key}' ({} bytes) FAILED: {e}", val.len()),
+                }
+                return;
+            }
+        }
         if let Some(nvs) = self.nvs.as_mut() {
-            // Blob, not str (see get_str_owned). Log failures — a full NVS partition
-            // would otherwise silently drop the layout and boot to factory defaults.
             if let Err(e) = nvs.set_raw(key, val.as_bytes()) {
                 log::warn!("nvs set '{key}' ({} bytes) FAILED: {e}", val.len());
             }
@@ -277,6 +273,9 @@ impl AppState {
             }
             if let Ok(Some(n)) = nvs.get_u8("btnpages") {
                 self.button_pages = n;
+            }
+            if let Ok(Some(t)) = nvs.get_u16("sleepto") {
+                self.sleep_timeout_s = t;
             }
             if let Ok(Some(r)) = nvs.get_u8("disprot") {
                 self.disp_rot = r & 3;
@@ -400,6 +399,10 @@ impl AppState {
         if serde_json::from_str::<serde_json::Value>(json).is_err() {
             return false;
         }
+        if self.car_json == json {
+            return true; // unchanged — skip the NVS write (the dashboard
+                         // re-pushes @C on every reconnect; no flash wear)
+        }
         self.car_json = json.to_owned();
         self.set_str("carjson", json);
         true
@@ -417,6 +420,16 @@ impl AppState {
         self.brightness = b;
         if let Some(nvs) = self.nvs.as_ref() {
             let _ = nvs.set_u8("bright", b);
+        }
+    }
+
+    pub fn set_sleep_timeout(&mut self, secs: u16) {
+        if secs == self.sleep_timeout_s {
+            return;
+        }
+        self.sleep_timeout_s = secs;
+        if let Some(nvs) = self.nvs.as_ref() {
+            let _ = nvs.set_u16("sleepto", secs);
         }
     }
 

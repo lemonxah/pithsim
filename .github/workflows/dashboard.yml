@@ -25,9 +25,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
-      # Shared pure-logic core (also exercised here, since it's a host workspace member).
-      - name: Test pith-core
-        run: cargo test -p pith-core
+      # Every host workspace member — includes the game-decoder regression tests
+      # in pith-sim and the dashboard's built-in-profile tests (pith-dashboard is
+      # a bin-only crate, so `--workspace` reaches tests `--lib` never would).
+      - name: Test host workspace
+        run: cargo test --workspace
 
       - name: Derive version
         id: ver

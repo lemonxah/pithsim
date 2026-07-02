@@ -11,6 +11,8 @@
 //! shared DC, ST7796 panels, XPT2046 touch) — deliberately self-contained so the
 //! recovery image shares no code that could carry the main firmware's bug.
 
+mod fat12;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::thread::sleep;
@@ -240,10 +242,83 @@ fn slot_label(main_slot: u8) -> String {
     format!("ota_{main_slot}")
 }
 
-/// Wipe the saved layout blobs so the main firmware boots clean.
+/// Expose the saved NVS config as a read-only USB drive: gather every known
+/// blob key from BOTH homes (the big `nvsblob` partition first — where the main
+/// firmware migrates the layout blobs — then the default `nvs`), build a FAT12
+/// RAM disk, and start TinyUSB MSC. The disk buffer is leaked: MSC serves it
+/// until the user reboots out of drive mode.
+fn mount_nvs_as_usb(nvs: Option<&EspNvs<esp_idf_svc::nvs::NvsDefault>>) -> bool {
+    // 8.3-clean names (.jsn, not .json — FAT12 extensions are 3 chars).
+    const KEYS: &[(&str, &str)] = &[
+        ("uijson", "ui.jsn"),
+        ("edjson", "editor.jsn"),
+        ("racejson", "race.jsn"),
+        ("carjson", "car.jsn"),
+        ("profjson", "profile.jsn"),
+        ("buttonsjson", "buttons.jsn"),
+        ("pinsjson", "pins.jsn"),
+    ];
+    let blob_nvs = esp_idf_svc::nvs::EspCustomNvsPartition::take("nvsblob")
+        .ok()
+        .and_then(|p| EspNvs::new(p, NS, false).ok());
+
+    let mut buf = vec![0u8; 32768];
+    let mut read_key = |key: &str| -> Option<Vec<u8>> {
+        if let Some(b) = blob_nvs.as_ref() {
+            if let Ok(Some(data)) = b.get_raw(key, &mut buf) {
+                if !data.is_empty() {
+                    return Some(data.to_vec());
+                }
+            }
+        }
+        if let Ok(Some(data)) = nvs?.get_raw(key, &mut buf) {
+            if !data.is_empty() {
+                return Some(data.to_vec());
+            }
+        }
+        None
+    };
+
+    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    for (key, fname) in KEYS {
+        if let Some(data) = read_key(key) {
+            files.push((fname.to_string(), data));
+        }
+    }
+    let readme = format!(
+        "Pith DDU saved configuration (read-only)\n\
+         recovery v{}\n\n\
+         Files are the device's NVS blobs as pushed by the dashboard:\n\
+         ui/editor/race = screen layouts, car = shift-light profile,\n\
+         pins = GPIO map. {} file(s) present.\n\
+         Tap the device screen to exit and reboot.\n",
+        env!("CARGO_PKG_VERSION"),
+        files.len(),
+    );
+    files.push(("readme.txt".to_string(), readme.into_bytes()));
+
+    let entries: Vec<fat12::FileEntry> = files
+        .iter()
+        .map(|(n, d)| fat12::FileEntry { name: n, data: d })
+        .collect();
+    let disk: &'static [u8] = Box::leak(fat12::build(&entries).into_boxed_slice());
+    unsafe { sys::pith_msc_start(disk.as_ptr(), disk.len() as u32) }
+}
+
+/// Wipe the saved layout blobs so the main firmware boots clean. Clears BOTH
+/// homes: the default `nvs` (legacy location) and the big `nvsblob` partition
+/// the main firmware migrates the layout blobs to (absent on old tables —
+/// best-effort).
 fn reset_layout(nvs: &mut EspNvs<esp_idf_svc::nvs::NvsDefault>) {
     for k in ["uijson", "racejson", "edjson"] {
         let _ = nvs.set_raw(k, b"");
+    }
+    if let Ok(part) = esp_idf_svc::nvs::EspCustomNvsPartition::take("nvsblob") {
+        if let Ok(mut blob) = EspNvs::new(part, NS, true) {
+            for k in ["uijson", "racejson", "edjson"] {
+                let _ = blob.set_raw(k, b"");
+            }
+        }
     }
 }
 
@@ -434,21 +509,56 @@ fn main() {
                             chain_load_main(main_slot);
                         }
                         pith_bios::Action::MountUsb => {
-                            // TODO: TinyUSB MSC backed by a synthetic FAT of the NVS
-                            // blobs (read-only). Placeholder until that lands.
-                            pith_bios::render_message(&mut fb, "USB DRIVE", "not available in this build yet");
+                            // Read-only USB drive of the saved config: build a
+                            // FAT12 RAM disk from the NVS blobs and serve it via
+                            // TinyUSB MSC (pith_msc). One-way trip: USB stays up
+                            // until the user taps to reboot.
+                            let ok = mount_nvs_as_usb(nvs.as_ref());
+                            pith_bios::render_message(
+                                &mut fb,
+                                "USB DRIVE",
+                                if ok {
+                                    "connected read-only - tap to reboot"
+                                } else {
+                                    "USB bring-up failed - tap to reboot"
+                                },
+                            );
                             blit!(disp1, fb);
                             blit!(disp2, fb);
                             sleep(Duration::from_millis(400));
                             while read_touch(&mut t1).is_none() && read_touch(&mut t2).is_none() {
                                 sleep(Duration::from_millis(30));
                             }
-                            while read_touch(&mut t1).is_some() || read_touch(&mut t2).is_some() {
-                                sleep(Duration::from_millis(15));
+                            unsafe {
+                                sleep(Duration::from_millis(80));
+                                sys::esp_restart();
                             }
-                            pith_bios::render_menu(&mut fb, version, &slot, prev_fails);
+                        }
+                        pith_bios::Action::Download => {
+                            // Software route into the ROM's USB download mode —
+                            // same state as holding BOOT while tapping RESET, no
+                            // buttons needed: set RTC_CNTL_FORCE_DOWNLOAD_BOOT
+                            // (RTC_CNTL_OPTION1_REG = 0x6000812C, bit 0 — from
+                            // esp-idf soc/esp32s3/rtc_cntl_reg.h) and restart.
+                            // The chip re-enumerates as Espressif's ROM loader;
+                            // flash from the PC (pith-flash/espflash), which
+                            // resets it back into normal boot when done. A power
+                            // cycle also exits (the bit doesn't survive one).
+                            pith_bios::render_message(
+                                &mut fb,
+                                "USB FLASH MODE",
+                                "entering download mode - flash from the PC",
+                            );
                             blit!(disp1, fb);
                             blit!(disp2, fb);
+                            log::warn!("entering ROM USB download mode (software DFU)");
+                            sleep(Duration::from_millis(300));
+                            unsafe {
+                                const RTC_CNTL_OPTION1_REG: *mut u32 = 0x6000_812C as *mut u32;
+                                const RTC_CNTL_FORCE_DOWNLOAD_BOOT: u32 = 1 << 0;
+                                core::ptr::write_volatile(RTC_CNTL_OPTION1_REG, RTC_CNTL_FORCE_DOWNLOAD_BOOT);
+                                sys::esp_restart();
+                            }
                         }
                         pith_bios::Action::Reboot => unsafe {
                             sleep(Duration::from_millis(80));

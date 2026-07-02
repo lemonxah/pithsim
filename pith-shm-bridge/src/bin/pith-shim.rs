@@ -51,7 +51,7 @@ fn main() {
                 last_label = r.label;
                 println!("pith-shim: streaming {}", r.label);
             }
-            // ~2 Hz debug readout so you can confirm what the source provides.
+            // ~0.5 Hz debug readout so you can confirm what the source provides.
             if ticks % 100 == 0 {
                 if let Some(t) = pith_core::simhub::parse_line(&r.frame) {
                     println!(
@@ -61,7 +61,13 @@ fn main() {
                         t.battery_pct, t.pit_limiter, t.fuel_dl,
                     );
                 }
-                // Raw rF2/LMU field probe (carcass temp + flag bytes), if present.
+            }
+            // ~4 Hz raw rF2/LMU field probe (surf/inner/carcass tyre temp + flag
+            // bytes), if present (rF2/LMU only — r.debug is None for every other
+            // game). Faster than the status line above: a hard-braking spike in
+            // surface temp can peak and fall within a second, so a slower sample
+            // would miss it when eyeballing this against the in-game MFD readout.
+            if ticks % 12 == 0 {
                 if let Some(d) = &r.debug {
                     print!("{d}");
                 }

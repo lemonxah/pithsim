@@ -80,6 +80,7 @@ pub fn spawn() {
                     t.bs2_ms = 30900;
                     t.bs3_ms = 25600;
                     *usb::TELEM.lock().unwrap() = t;
+                    usb::note_telem(); // sim frames keep the screens awake too
                 }
                 thread::sleep(Duration::from_millis(50));
             }

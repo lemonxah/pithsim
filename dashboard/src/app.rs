@@ -176,6 +176,7 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
         build_cancel: Arc::new(AtomicBool::new(false)),
         build_pgid: Arc::new(AtomicI32::new(-1)),
         tray_active: Arc::new(AtomicBool::new(false)),
+        dev_out: Arc::new((Mutex::new(crate::ctx::DevOutbox::default()), std::sync::Condvar::new())),
     });
 
     {
@@ -220,6 +221,12 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
     rt.spawn_blocking({
         let c = ctx.clone();
         move || crate::loops::device_loop(c)
+    });
+    // Dedicated writer for the fire-and-forget device streams (telemetry +
+    // relatives) — a wedged HID link stalls only this thread, not ingestion.
+    rt.spawn_blocking({
+        let c = ctx.clone();
+        move || crate::loops::device_writer_loop(c)
     });
     rt.spawn_blocking({
         let c = ctx.clone();

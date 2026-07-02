@@ -53,6 +53,13 @@ pub(crate) fn push_sim_frame(
         return;
     };
     let now = Instant::now();
+    // The merged result is only consumed at 30 Hz (device) / 12 Hz (preview),
+    // but sources can deliver hundreds of packets/s combined — so always cache
+    // the incoming frame (cheap), and only rebuild the merge + serialize when
+    // a consumer is actually due. Saves a FIELD_COUNT×sources overlay + string
+    // alloc per packet, all of which happened under the State mutex.
+    let device_due = now.duration_since(*last_push) >= Duration::from_millis(33);
+    let preview_due = now.duration_since(*last_preview) >= Duration::from_millis(80);
     // Merge every live source (augment, not replace), then augment with computed
     // fields (best/cur lap, fuel/lap, delta). Lap-to-lap tracking lives in State.
     let merged_frame = {
@@ -73,6 +80,9 @@ pub(crate) fn push_sim_frame(
                 p.observe(&incoming);
                 s.src_frames.push((source.to_string(), incoming, now, p));
             }
+        }
+        if !device_due && !preview_due {
+            return;
         }
         // Rebuild from defaults and overlay each live source's NON-default fields.
         // Order by a STABLE priority (authoritative source applied last → wins), NOT
@@ -101,18 +111,16 @@ pub(crate) fn push_sim_frame(
         frame_from_telem(&merged)
     };
     let line: &str = &merged_frame;
-    // Push to the device (~30 Hz — smooth on the LCD, half the HID traffic of 60,
-    // and no @T round-trip back from the device).
-    if now.duration_since(*last_push) >= Duration::from_millis(33) {
+    // Queue for the device (~30 Hz — smooth on the LCD, half the HID traffic of
+    // 60, and no @T round-trip back from the device). The blocking HID write
+    // happens on the dedicated writer thread — never here on the receive path.
+    if device_due {
         *last_push = now;
-        let mut d = ctx.dash();
-        if d.connected() {
-            d.push_telemetry(line);
-        }
+        ctx.send_telem(line);
     }
     // Feed the dashboard's OWN overview directly (~12 Hz) — much smoother than the
     // 6 Hz device_loop, capped so the rendered preview doesn't hog the UI thread.
-    if now.duration_since(*last_preview) >= Duration::from_millis(80) {
+    if preview_due {
         *last_preview = now;
         let frame = line[1..].to_string();
         let c2 = ctx.clone();
@@ -324,16 +332,15 @@ fn apply_relatives(ctx: &Arc<Ctx>, line: &str) {
     if ctx.ota_active.load(Ordering::SeqCst) {
         return;
     }
-    let mut d = ctx.dash();
-    if d.connected() {
-        d.push_relatives(line);
-    }
+    ctx.send_relatives(line); // pushed by the device writer thread
 }
 
 /// Apply a car model from any source: show it as the detected car, match the
 /// library, and push the per-car LED profile + shift scalars
 /// (`auto_apply_car_model` dedups on the model string, so calling it per-frame is
-/// cheap).
+/// cheap). A model with no library match falls back to generic max-RPM shift
+/// lights (clears any stale previous-game profile on the device) — retried each
+/// heartbeat, so the real profile still lands once the library loads.
 fn apply_car_model(ctx: &Arc<Ctx>, model: &str) {
     if model.is_empty() {
         return;
@@ -341,7 +348,9 @@ fn apply_car_model(ctx: &Arc<Ctx>, model: &str) {
     {
         let mut s = ctx.lock();
         s.detected_model = model.to_string();
-        crate::net::cardata::auto_apply_car_model(ctx, &mut s, model);
+        if !crate::net::cardata::auto_apply_car_model(ctx, &mut s, model) {
+            crate::net::cardata::apply_generic_profile(ctx, &mut s, model);
+        }
     }
     let label = model.to_string();
     ctx.ui_run(move |u| {
@@ -515,14 +524,35 @@ pub fn udp_listener_loop(ctx: Arc<Ctx>) {
                 push_sim_frame(&ctx, &frame, name, &mut last_push, &mut last_preview);
                 packets += 1;
                 source = name.to_string();
-                // Surface the source game + (numeric) car identity ~1 Hz.
+                // Surface the source game + (numeric) car identity, and resolve a
+                // shift-light profile — a real per-car library match first (e.g.
+                // Forza's numeric ordinal), falling back to a shipped built-in for
+                // decoders that have one (F1, which sends no car identity at all) —
+                // ~1 Hz. Only the match runs under the lock; the device push is
+                // spawned inside the apply fns.
                 if last_ident.elapsed() >= Duration::from_secs(1) {
                     last_ident = Instant::now();
                     let car = dec.car.unwrap_or_default();
+                    {
+                        let mut s = ctx.lock();
+                        let matched = !car.is_empty()
+                            && crate::net::cardata::auto_apply_car_model(&ctx, &mut s, &car);
+                        if !matched
+                            && !crate::net::cardata::apply_builtin_for_decoder(&ctx, &mut s, name)
+                        {
+                            // Nothing matched at all: fall back to generic max-RPM
+                            // shift lights instead of a stale previous-game profile.
+                            crate::net::cardata::apply_generic_profile(&ctx, &mut s, name);
+                        }
+                    }
                     ctx.ui_run(move |u| {
                         let cl = u.global::<CarLib>();
                         cl.set_detected_game(sstr(name));
-                        cl.set_detected_car(sstr(&car));
+                        // Don't blank the label when this decoder sends no car
+                        // identity — the built-in profile path sets its own.
+                        if !car.is_empty() {
+                            cl.set_detected_car(sstr(&car));
+                        }
                     });
                 }
             }
@@ -535,6 +565,42 @@ pub fn udp_listener_loop(ctx: Arc<Ctx>) {
             last_stat = Instant::now();
             packets_at_stat = packets;
             push_udp_status(&ctx, Some(port), packets, pps, &source);
+        }
+    }
+}
+
+/// Dedicated device-write thread for the fire-and-forget streams. Drains the
+/// latest-wins outbox (`Ctx::dev_out`) and performs the blocking HID pushes so
+/// a slow/wedged link never stalls the telemetry receive path — producers just
+/// overwrite the slot with a fresher frame. Skips (and drops) frames while an
+/// OTA is active or the device is disconnected.
+pub fn device_writer_loop(ctx: Arc<Ctx>) {
+    while ctx.running.load(Ordering::SeqCst) {
+        let (telem, rel) = {
+            let (m, cv) = &*ctx.dev_out;
+            let mut g = m.lock().unwrap();
+            // Wait (with a timeout so shutdown is prompt) until something queues.
+            while g.telem.is_none() && g.rel.is_none() {
+                let (ng, res) = cv.wait_timeout(g, Duration::from_millis(500)).unwrap();
+                g = ng;
+                if res.timed_out() && !ctx.running.load(Ordering::SeqCst) {
+                    return;
+                }
+            }
+            (g.telem.take(), g.rel.take())
+        };
+        if ctx.ota_active.load(Ordering::SeqCst) {
+            continue; // drop — the OTA owns the link; fresher frames follow
+        }
+        let mut d = ctx.dash();
+        if !d.connected() {
+            continue; // drop — device_loop reconnects; fresher frames follow
+        }
+        if let Some(t) = telem {
+            d.push_telemetry(&t);
+        }
+        if let Some(r) = rel {
+            d.push_relatives(&r);
         }
     }
 }
@@ -870,6 +936,78 @@ fn set_acc_status(ctx: &Arc<Ctx>, status: &'static str) {
     ctx.ui_run(move |u| u.global::<TelemetryUdp>().set_acc_status(sstr(status)));
 }
 
+/// Build a relatives/standings list from the ACC broadcasting per-car updates —
+/// the same wire line the shim builds from rF2 scoring, so the device widget
+/// works identically. ACC sends no gap times, so both gaps are distance × pace
+/// (pace = player's best lap over the track length; falls back to the field's
+/// best, else a nominal 55 m/s — mirroring the rF2 builder's convention).
+fn acc_relatives(
+    cars: &std::collections::HashMap<i32, (acc::CarUpdate, Instant)>,
+    names: &std::collections::HashMap<i32, (String, i32)>,
+    focused: i32,
+    track_m: f32,
+) -> Option<pith_core::relatives::Relatives> {
+    use pith_core::relatives::{from_cars, short_name, RelCar, FLAG_IN_PITS, FLAG_PLAYER};
+    if track_m <= 1.0 || cars.len() < 2 {
+        return None;
+    }
+    let live: Vec<&acc::CarUpdate> = cars.values().map(|(u, _)| u).collect();
+    let player = live.iter().find(|u| u.car_index == focused)?;
+
+    let best_ms = {
+        let pb = player.best_ms;
+        let field = live.iter().map(|u| u.best_ms).filter(|&b| b > 0).min().unwrap_or(0);
+        if pb > 0 { pb } else { field }
+    };
+    let pace_mps = if best_ms > 0 { track_m as f64 / (best_ms as f64 / 1000.0) } else { 55.0 };
+
+    // Race progress in laps (laps + spline) — the leader is the furthest along.
+    let prog = |u: &acc::CarUpdate| u.laps as f64 + u.spline.clamp(0.0, 1.0) as f64;
+    let leader_prog = live.iter().map(|u| prog(u)).fold(f64::MIN, f64::max);
+
+    let mut built: Vec<RelCar> = Vec::with_capacity(live.len());
+    let mut player_i = 0usize;
+    for (i, u) in live.iter().enumerate() {
+        // Signed track gap to the player, wrapped to the nearest direction.
+        let mut d = (u.spline - player.spline) as f64;
+        if d > 0.5 {
+            d -= 1.0;
+        } else if d < -0.5 {
+            d += 1.0;
+        }
+        let gap_rel_ms = if u.car_index == focused {
+            player_i = i;
+            0
+        } else {
+            (d * track_m as f64 / pace_mps * 1000.0).round() as i32
+        };
+        let gap_leader_ms =
+            (((leader_prog - prog(u)).max(0.0) * track_m as f64) / pace_mps * 1000.0).round() as i32;
+        let mut flags = 0u8;
+        if u.car_index == focused {
+            flags |= FLAG_PLAYER;
+        }
+        if u.in_pits() {
+            flags |= FLAG_IN_PITS;
+        }
+        let mut rc = RelCar {
+            place: u.position.clamp(0, 255) as u8,
+            gap_leader_ms,
+            gap_rel_ms,
+            laps: u.laps.clamp(0, i16::MAX as i32) as i16,
+            flags,
+            name: Default::default(),
+        };
+        match names.get(&u.car_index) {
+            Some((n, _)) if !n.is_empty() => rc.set_name(short_name(n)),
+            Some((_, num)) => rc.set_name(&format!("#{num}")),
+            None => rc.set_name(&format!("car{}", u.car_index)),
+        }
+        built.push(rc);
+    }
+    Some(from_cars(built, player_i))
+}
+
 /// ACC "Broadcasting" client. When enabled on the Telemetry-UDP page, registers
 /// with the game (default 127.0.0.1:9000), streams the focused car's update, and
 /// feeds it to the device. Re-registers on silence; tears down on config change.
@@ -912,6 +1050,15 @@ pub fn acc_connector_loop(ctx: Arc<Ctx>) {
         let mut last_rx = Instant::now();
         let mut last_src = Instant::now() - Duration::from_secs(2);
         let mut buf = [0u8; 2048];
+        // Relatives/standings state: freshest update per car, entry-list names
+        // (name, race number), and the track length for gap math.
+        let mut cars: std::collections::HashMap<i32, (acc::CarUpdate, Instant)> =
+            std::collections::HashMap::new();
+        let mut names: std::collections::HashMap<i32, (String, i32)> =
+            std::collections::HashMap::new();
+        let mut track_m: f32 = 0.0;
+        let mut last_rel = Instant::now();
+        let mut last_entry_req = Instant::now();
 
         loop {
             if !ctx.running.load(Ordering::SeqCst) {
@@ -956,6 +1103,13 @@ pub fn acc_connector_loop(ctx: Arc<Ctx>) {
                         }
                         acc::AccMsg::RegisterFailed => set_acc_status(&ctx, "Rejected — check password"),
                         acc::AccMsg::Realtime { focused_car_index } => focused = focused_car_index,
+                        acc::AccMsg::EntryCar { car_index, name, race_number } => {
+                            names.insert(car_index, (name, race_number));
+                        }
+                        acc::AccMsg::Track { name, meters } => {
+                            track_m = meters.max(0) as f32;
+                            apply_track(&ctx, &name);
+                        }
                         acc::AccMsg::Car(u) => {
                             if focused < 0 || u.car_index == focused {
                                 let frame = acc_frame(&u);
@@ -963,6 +1117,28 @@ pub fn acc_connector_loop(ctx: Arc<Ctx>) {
                                 if last_src.elapsed() >= Duration::from_secs(1) {
                                     last_src = Instant::now();
                                     set_udp_source(&ctx, "ACC");
+                                }
+                            }
+                            // Every car feeds the relatives table; rebuilt ~5 Hz.
+                            cars.insert(u.car_index, (u, Instant::now()));
+                            if last_rel.elapsed() >= Duration::from_millis(200) {
+                                last_rel = Instant::now();
+                                cars.retain(|_, (_, at)| at.elapsed() < Duration::from_secs(5));
+                                if let Some(r) = acc_relatives(&cars, &names, focused, track_m) {
+                                    apply_relatives(&ctx, &r.to_wire());
+                                }
+                                // A car we have no name for yet (mid-session join)
+                                // → refresh the entry list, throttled.
+                                if let Some(id) = conn_id {
+                                    if cars.keys().any(|i| !names.contains_key(i))
+                                        && last_entry_req.elapsed() > Duration::from_secs(10)
+                                    {
+                                        last_entry_req = Instant::now();
+                                        let _ = sock.send_to(
+                                            &acc::encode_request(acc::REQUEST_ENTRY_LIST, id),
+                                            (host.as_str(), port),
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -1138,6 +1314,15 @@ pub fn gt7_connector_loop(ctx: Arc<Ctx>) {
                         if last_src.elapsed() >= Duration::from_secs(1) {
                             last_src = Instant::now();
                             set_udp_source(&ctx, "Gran Turismo 7");
+                            // Surface the car via the embedded id→name DB (GT7
+                            // sends only a numeric CarCode). Same path as @CM:
+                            // library match (none for GT7 yet) → generic
+                            // max-RPM shift lights + the detected-car label.
+                            if let Some(name) =
+                                gt7::car_code(&pt).and_then(gt7::car_name)
+                            {
+                                apply_car_model(&ctx, name);
+                            }
                         }
                     }
                 }

@@ -307,7 +307,11 @@ fn read_touch<S: embedded_hal::spi::SpiDevice>(dev: &mut S) -> Option<(i32, i32)
             log::warn!("touch raw: z={z} z1={z1} z2={z2} rx={rx} ry={ry} (thr={Z_PRESS})");
         }
     }
-    if z < Z_PRESS {
+    // Glitch guard: a failed/garbled SPI read leaves z2 = 0, which the combined
+    // formula scores as a MAXIMAL press (z = z1 + 4095 - 0) — phantom touches,
+    // e.g. spurious wake-from-sleep. A real press always lifts z1 well off its
+    // ~0 idle level, so require that too.
+    if z1 < 50 || z < Z_PRESS {
         return None;
     }
     // Normalise to 0..1000 in the panel-native touch axes…
@@ -327,6 +331,10 @@ enum RaceMode {
     Race,
     Config,
 }
+
+/// Set by the config screen's SLEEP NOW button; the display task consumes it
+/// and enters sleep mode on the next frame.
+static SLEEP_NOW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn now_ms() -> i64 {
     unsafe { esp_idf_svc::sys::esp_timer_get_time() / 1000 }
@@ -418,9 +426,9 @@ fn display_task() {
         .expect("disp2");
 
     // Backlight enable (active-high): drive it high so the panels are lit + stable
-    // (a floating enable pin makes the screen flicker). Bound for the task lifetime
-    // so the pin stays driven.
-    let _backlight = if pins.backlight >= 0 {
+    // (a floating enable pin makes the screen flicker). Kept mutable — sleep mode
+    // drives it low to kill the panels' light.
+    let mut backlight = if pins.backlight >= 0 {
         PinDriver::output(unsafe { AnyIOPin::new(pins.backlight) }).ok().map(|mut bl| {
             let _ = bl.set_high();
             bl
@@ -471,6 +479,8 @@ fn display_task() {
     // re-blit the bar+percent rect when the percentage advances.
     let mut ota_drawn = false;
     let mut last_ota_pct = -1i32;
+    // Config screen content signature — 0 forces a repaint on (re)entry.
+    let mut last_cfg_sig: u64 = 0;
 
     // Two PSRAM framebuffers, one per physical panel. The UI draws into RAM
     // (fonts + fills never touch SPI) and each panel is flushed in a single DMA
@@ -482,7 +492,62 @@ fn display_task() {
     // runs first from the factory partition), so the main firmware boots straight
     // into the dashboard render loop — no in-app timer here.
 
+    // Sleep mode: screens black + backlight off + LED strip blanked. Entered
+    // manually (config SLEEP NOW) or after `sleep_timeout_s` with no telemetry
+    // and no touch; woken by any touch, a fresh telemetry frame, or an OTA start.
+    let mut sleeping = false;
+    let mut sleep_since = 0i64; // entry time — telemetry must be NEWER to wake
+    let mut sleep_touch_guard = false; // ignore the finger that triggered SLEEP NOW
+    let mut guard_clear_ms = 0i64; // when that finger lifted — cool-down anchor
+    let mut wake_ms = now_ms(); // boot / last-wake baseline so we don't sleep instantly
+
     loop {
+        if sleeping {
+            use std::sync::atomic::Ordering;
+            let mut any_touch = read_touch(&mut t1).is_some() || read_touch(&mut t2).is_some();
+            // Debounce the wake touch: a real finger stays down across ~30 ms of
+            // resampling; a single noisy/glitched XPT2046 read doesn't.
+            if any_touch && !sleep_touch_guard {
+                for _ in 0..2 {
+                    thread::sleep(Duration::from_millis(15));
+                    any_touch = any_touch
+                        && (read_touch(&mut t1).is_some() || read_touch(&mut t2).is_some());
+                }
+            }
+            if sleep_touch_guard && !any_touch {
+                // The SLEEP NOW finger lifted. Its release can bounce (pressure
+                // hovers around the threshold and re-reads as a fresh press), so
+                // touch can only wake after a short cool-down from this moment.
+                sleep_touch_guard = false;
+                guard_clear_ms = now_ms();
+            }
+            let touch_wake =
+                any_touch && !sleep_touch_guard && now_ms() - guard_clear_ms > 400;
+            let telem_wake = usb::last_telem_ms() > sleep_since;
+            let ota_wake = ota::ACTIVE.load(Ordering::Relaxed);
+            if touch_wake || telem_wake || ota_wake {
+                log::info!("sleep: wake (touch={touch_wake} telem={telem_wake} ota={ota_wake})");
+                sleeping = false;
+                state::SLEEPING.store(false, Ordering::Relaxed);
+                if let Some(bl) = backlight.as_mut() {
+                    let _ = bl.set_high();
+                }
+                race_cache.invalidate();
+                side_cache.invalidate();
+                last_cfg_sig = 0;
+                wake_ms = now_ms();
+                last_touch_ms = wake_ms;
+                if any_touch {
+                    // swallow the wake tap — it must not press a button underneath
+                    prev_d1_down = true;
+                    prev_btn_down = true;
+                }
+            } else {
+                thread::sleep(Duration::from_millis(120));
+                continue;
+            }
+        }
+
         let t = *usb::TELEM.lock().unwrap();
         let now = now_ms();
 
@@ -592,6 +657,7 @@ fn display_task() {
         // A mode switch changes the whole race panel -> force a full repaint.
         if mode != last_mode {
             race_cache.invalidate();
+            last_cfg_sig = 0; // config screen: repaint on (re)entry
             last_mode = mode;
         }
 
@@ -621,6 +687,39 @@ fn display_task() {
                 hid::set(b, false);
             }
             touched_side = None;
+        } else {
+            last_touch_ms = now; // side-panel touch keeps the device awake too
+        }
+
+        // --- sleep entry: manual request, or idle past the configured timeout ---
+        {
+            use std::sync::atomic::Ordering;
+            let sleep_req = SLEEP_NOW.swap(false, Ordering::Relaxed);
+            let timeout_ms = state::with(|s| s.sleep_timeout_s) as i64 * 1000;
+            let awake_ref = last_touch_ms.max(usb::last_telem_ms()).max(wake_ms);
+            if sleep_req || (timeout_ms > 0 && now - awake_ref > timeout_ms) {
+                log::info!(
+                    "sleep: enter (manual={sleep_req}, idle {}s)",
+                    (now - awake_ref) / 1000
+                );
+                sleeping = true;
+                // Stamp entry NOW, not with the frame-start `now` — a telemetry
+                // frame landing mid-frame would read as newer than entry and
+                // self-wake the device on the first sleep poll.
+                sleep_since = now_ms();
+                sleep_touch_guard = sleep_req; // manual entry: wait for finger-up
+                state::SLEEPING.store(true, Ordering::Relaxed);
+                // Blank the panels (side/display-2 first per shared-bus ordering),
+                // then cut the backlight — panels stay dark even without a BL pin.
+                let _ = fb1.clear(Rgb565::BLACK);
+                let _ = fb2.clear(Rgb565::BLACK);
+                blit!(disp2, fb2);
+                blit!(disp1, fb1);
+                if let Some(bl) = backlight.as_mut() {
+                    let _ = bl.set_low();
+                }
+                continue;
+            }
         }
 
         // Render press-feedback mask (bit = hid-1) = the button currently under the
@@ -684,23 +783,41 @@ fn display_task() {
             } else {
                 match mode {
                     RaceMode::Config => {
-                        let (b, sim, car) =
-                            state::with(|s| (s.brightness, s.sim_on, s.car_model.clone()));
+                        let (b, sim, car, sleep_to) =
+                            state::with(|s| (s.brightness, s.sim_on, s.car_model.clone(), s.sleep_timeout_s));
                         let heap_kb =
                             (unsafe { esp_idf_svc::sys::esp_get_free_heap_size() } / 1024) as i32;
                         let uptime_s = unsafe { esp_idf_svc::sys::esp_timer_get_time() } / 1_000_000;
-                        let info = ui::ConfigInfo {
-                            fw: env!("CARGO_PKG_VERSION"),
-                            board: option_env!("PITHDDU_BOARD").unwrap_or("xiao_s3"),
-                            serial: crate::device::serial(),
-                            car: &car,
-                            heap_kb,
-                            uptime_s,
-                            brightness: b,
-                            sim,
+                        // The screen's content only moves ~1 Hz (uptime tick) —
+                        // without this gate it re-rendered + FULL-blitted every
+                        // frame (~60×/s of 614 KB SPI traffic for static text).
+                        // Heap is bucketed to 8 KB so alloc jitter alone doesn't
+                        // dirty the screen; the value shown is ≤1 s stale at most
+                        // (the uptime tick refreshes it).
+                        let cfg_sig = {
+                            let mut x: u64 = 0xcbf29ce484222325;
+                            for v in [b as i64, sim as i64, uptime_s, (heap_kb >> 3) as i64, car.len() as i64, sleep_to as i64] {
+                                x ^= v as u64;
+                                x = x.wrapping_mul(0x100000001b3);
+                            }
+                            x
                         };
-                        ui::render_config(fb, &info);
-                        dirty_rects.push(full);
+                        if cfg_sig != last_cfg_sig {
+                            last_cfg_sig = cfg_sig;
+                            let info = ui::ConfigInfo {
+                                fw: env!("CARGO_PKG_VERSION"),
+                                board: option_env!("PITHDDU_BOARD").unwrap_or("xiao_s3"),
+                                serial: crate::device::serial(),
+                                car: &car,
+                                heap_kb,
+                                uptime_s,
+                                brightness: b,
+                                sim,
+                                sleep_timeout_s: sleep_to,
+                            };
+                            ui::render_config(fb, &info);
+                            dirty_rects.push(full);
+                        }
                     }
                     RaceMode::Race => {
                         let race_scr = local_doc
@@ -746,6 +863,16 @@ fn handle_config_touch(mode: &mut RaceMode, tx: i32, ty: i32) {
         state::with(|s| s.set_brightness(pct));
     } else if ui::hit(ui::SIM_BTN, tx, ty) {
         state::with(|s| s.sim_on = !s.sim_on);
+    } else if ui::hit(ui::SLP_TO_BTN, tx, ty) {
+        // step to the next auto-sleep preset (wraps OFF -> 15S -> ... -> 10M)
+        state::with(|s| {
+            let i = ui::SLEEP_PRESETS.iter().position(|&p| p == s.sleep_timeout_s).unwrap_or(0);
+            let next = ui::SLEEP_PRESETS[(i + 1) % ui::SLEEP_PRESETS.len()];
+            s.set_sleep_timeout(next);
+        });
+    } else if ui::hit(ui::SLP_BTN, tx, ty) {
+        SLEEP_NOW.store(true, std::sync::atomic::Ordering::Relaxed);
+        *mode = RaceMode::Race; // wake back into the race screen, not config
     } else if ui::hit(ui::RBT_BTN, tx, ty) {
         thread::sleep(Duration::from_millis(150));
         unsafe { esp_idf_svc::sys::esp_restart() };

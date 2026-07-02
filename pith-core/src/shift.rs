@@ -7,7 +7,9 @@ use crate::simhub::Telemetry;
 
 pub const CAR_LED_MAX: usize = 12; // physical rev LEDs
 pub const CAR_GEARS: usize = 11; // R, N, 1..9
-const FLASH_MS: i64 = 100; // shift-light flash half-period
+/// Shift-light flash half-period (pub so render caches can key repaints on the
+/// exact same phase the strip strobes with).
+pub const FLASH_MS: i64 = 100;
 
 /// Generic progressive rev-bar config (used when no car is loaded). Colors RGB888.
 #[derive(Clone, Copy)]
@@ -77,7 +79,7 @@ pub fn gear_index(g: u8) -> usize {
 }
 
 /// Effective shift RPM: the reported value, else ~93% of max.
-fn shift_rpm_of(t: &Telemetry) -> i32 {
+pub fn shift_rpm_of(t: &Telemetry) -> i32 {
     if t.shift_rpm > 4200 {
         t.shift_rpm
     } else if t.max_rpm > 4200 {

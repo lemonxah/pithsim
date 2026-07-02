@@ -79,6 +79,12 @@ Columns: **Forza** · **F1** (Codemasters/EA) · **AMS2** (Automobilista 2 / Pro
 **ACC** · **AC** (Assetto Corsa) · **EVO** (AC EVO) · **rF2** (rFactor 2 / Le Mans Ultimate) ·
 **R3E** (RaceRoom).
 
+Also supported (not yet in the matrix): the **PiBoSo family** — MX Bikes and
+Kart Racing Pro via the games' "UDP Proxy" output (`proxy_udp.ini`: `enable=1`,
+`ip=<dashboard>:<udp port>`, `info=1`), covering gear/rpm/max+shift rpm/speed/
+fuel/water/inputs/laps/splits plus the bike/kart name for the car library. GP
+Bikes / World Racing Series stream the same framing and decode head-only.
+
 | Field | Forza | F1 | AMS2 | DiRT | LFS | GT7 | ACC | AC | EVO | rF2 | R3E |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | gear / speed | U | U | U | U | U | U | U·S | U·S | S | S | S |

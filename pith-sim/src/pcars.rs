@@ -37,7 +37,7 @@ impl GameDecoder for PCarsDecoder {
         t.pit_limiter = (flags & 0x08 != 0) as i32;
         t.abs_active = (flags & 0x10 != 0) as i32;
         t.steer = le::i8(b, 44) as i32 * 100 / 127; // filtered steering -127..127
-        t.boost_kpa = le::u8(b, 46) as i32; // boost amount
+        t.boost_kpa = le::u8(b, 46) as i32; // sBoostAmount — unit undocumented; treat as approximate
         t.throttle = le::u8(b, 13) as i32 * 100 / 255; // unfiltered throttle 0..255
         t.brake = le::u8(b, 14) as i32 * 100 / 255;
         t.clutch = le::u8(b, 16) as i32 * 100 / 255;
