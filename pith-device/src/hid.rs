@@ -1,6 +1,18 @@
 use hidapi::{HidApi, HidDevice};
 use std::time::{Duration, Instant};
 
+/// True if a device matching `vid`/`pid` is currently plugged in — a cheap
+/// presence check that doesn't open (and so doesn't lock out) the device.
+pub fn device_present(vid: u16, pid: u16) -> bool {
+    let Ok(api) = HidApi::new() else {
+        return false;
+    };
+    let found = api
+        .device_list()
+        .any(|d| d.vendor_id() == vid && d.product_id() == pid);
+    found
+}
+
 pub struct Hid {
     api: Option<HidApi>,
     dev: Option<HidDevice>,

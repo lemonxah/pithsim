@@ -2,8 +2,9 @@
 name = "pith-device"
 version = "0.1.0"
 edition = "2021"
-description = "Shared device transport (HID + serial) and OTA flashing for the Pith DDU."
+description = "Shared device transport (HID + serial) for all Pith sim-racing gear: DDU command/log/OTA channel + handbrake calibration protocol."
 
 [dependencies]
 hidapi = "2"
 serialport = "4"
+pith-hb-core = { path = "../pith-hb-core" }
