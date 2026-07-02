@@ -163,6 +163,63 @@ component NavRow inherits Rectangle {
     ta := TouchArea { clicked => { root.clicked(); } }
 }
 
+// One connected-gear status card (bottom of the sidebar, one per device).
+component GearCard inherits Rectangle {
+    in property <string> name;
+    in property <bool> connected: false;
+    in property <string> detail: "";
+    in property <string> serial: "";
+    in property <string> fw: "";
+    in property <bool> active: false;
+    callback clicked;
+    height: 86px;
+    background: card-ta.has-hover ? Theme.elev : Theme.panel;
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: active ? Theme.accent : Theme.line;
+    card-ta := TouchArea { clicked => { root.clicked(); } }
+    VerticalLayout {
+        padding: 12px;
+        spacing: 7px;
+        HorizontalLayout {
+            spacing: 7px;
+            VerticalLayout { alignment: center; Dot { tint: root.connected ? Theme.green : Theme.text3; } }
+            Text {
+                text: root.name;
+                color: Theme.text;
+                font-family: Theme.display-font;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+        }
+        Text {
+            text: root.detail;
+            color: Theme.text3;
+            font-size: 11px;
+        }
+        // device serial number + firmware version
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                text: root.serial != "" ? root.serial : "—";
+                color: Theme.text3;
+                font-family: Theme.mono-font;
+                font-size: 10px;
+                overflow: elide;
+                horizontal-stretch: 1;
+            }
+            Text {
+                text: root.fw;
+                color: Theme.text3;
+                font-family: Theme.mono-font;
+                font-size: 10px;
+                horizontal-alignment: right;
+            }
+        }
+    }
+}
+
 export component Sidebar inherits Rectangle {
     width: 212px;
     background: Theme.sidebar;
@@ -196,54 +253,25 @@ export component Sidebar inherits Rectangle {
         Rectangle { height: 6px; }
         NavRow { glyph: "⬓"; label: "Handbrake"; active: AppState.page == Page.handbrake; dot: Hb.connected; clicked => { AppState.page = Page.handbrake; } }
         Rectangle { }  // spacer
-        // device status card — click to open the Device config page
-        Rectangle {
-            height: 86px;
-            background: dev-ta.has-hover ? Theme.elev : Theme.panel;
-            border-radius: 10px;
-            border-width: 1px;
-            border-color: AppState.page == Page.device ? Theme.accent : Theme.line;
-            dev-ta := TouchArea { clicked => { AppState.page = Page.device; } }
-            VerticalLayout {
-                padding: 12px;
-                spacing: 7px;
-                HorizontalLayout {
-                    spacing: 7px;
-                    VerticalLayout { alignment: center; Dot { tint: AppState.connected ? Theme.green : Theme.text3; } }
-                    Text {
-                        text: AppState.device-name;
-                        color: Theme.text;
-                        font-family: Theme.display-font;
-                        font-size: 14px;
-                        font-weight: 600;
-                        vertical-alignment: center;
-                    }
-                }
-                Text {
-                    text: AppState.conn-detail;
-                    color: Theme.text3;
-                    font-size: 11px;
-                }
-                // device serial number + firmware version
-                HorizontalLayout {
-                    spacing: 8px;
-                    Text {
-                        text: AppState.serial != "" ? AppState.serial : "—";
-                        color: Theme.text3;
-                        font-family: Theme.mono-font;
-                        font-size: 10px;
-                        overflow: elide;
-                        horizontal-stretch: 1;
-                    }
-                    Text {
-                        text: AppState.fw-version;
-                        color: Theme.text3;
-                        font-family: Theme.mono-font;
-                        font-size: 10px;
-                        horizontal-alignment: right;
-                    }
-                }
-            }
+        // Connected-gear card list: one status card per Pith device, pinned to
+        // the bottom of the sidebar. Click a card to open that device's page.
+        GearCard {
+            name: AppState.device-name;
+            connected: AppState.connected;
+            detail: AppState.conn-detail;
+            serial: AppState.serial;
+            fw: AppState.fw-version;
+            active: AppState.page == Page.device;
+            clicked => { AppState.page = Page.device; }
+        }
+        GearCard {
+            name: "Pith Handbrake";
+            connected: Hb.connected;
+            detail: Hb.connected ? Hb.board : (Hb.device-found ? "Detected — connecting…" : "Disconnected");
+            serial: Hb.serial;
+            fw: Hb.fw-version != "" ? "v" + Hb.fw-version : "";
+            active: AppState.page == Page.handbrake;
+            clicked => { AppState.page = Page.handbrake; }
         }
     }
     // hairline divider on the right

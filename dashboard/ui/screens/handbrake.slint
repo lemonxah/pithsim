@@ -71,6 +71,32 @@ component ConnectView inherits Rectangle {
                 if Hb.conn-detail != "": Text { text: Hb.conn-detail; color: Theme.text2; font-family: Theme.mono-font; font-size: 11px; horizontal-alignment: center; }
             }
         }
+
+        // Firmware flash card — appears while a handbrake sits in ROM download
+        // mode (hold BOOT, tap RESET): the app firmware isn't running then, so
+        // this is the only screen the user can be on.
+        if Hb.bootloader-present: Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                SectionLabel { text: "FIRMWARE — BOOTLOADER MODE"; }
+                Text {
+                    text: Hb.fw-latest != "" ? "Handbrake bootloader detected. Latest published firmware: " + Hb.fw-latest + "." : "Handbrake bootloader detected.";
+                    color: Theme.text;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+                if Hb.flashing: LiveBar { value: Hb.flash-progress; label: Hb.flash-status; }
+                if !Hb.flashing && Hb.flash-status != "": Text { text: Hb.flash-status; color: Theme.text2; font-family: Theme.mono-font; font-size: 11px; wrap: word-wrap; }
+                HorizontalLayout {
+                    Rectangle { }
+                    PrimaryButton {
+                        text: Hb.flashing ? "FLASHING…" : "FLASH " + (Hb.fw-latest != "" ? Hb.fw-latest : "LATEST");
+                        clicked => { if (!Hb.flashing) { Hb.flash-latest-requested(); } }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -286,6 +312,29 @@ component MonitorView inherits Rectangle {
             }
         }
         if !Hb.calibrated: Text { text: "Not calibrated yet."; color: Theme.amber; font-size: 13px; }
+
+        // Firmware status: the handbrake's image ships in the same GitHub
+        // release as the DDU's. No OTA on this device — updating means
+        // rebooting it into the ROM bootloader, which drops the HID link and
+        // lands the user on the connect screen where the flash card lives.
+        Card {
+            VerticalLayout {
+                padding: 20px;
+                spacing: 6px;
+                SectionLabel { text: "FIRMWARE"; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "installed v\{Hb.fw-version}" + (Hb.fw-latest != "" ? "   latest \{Hb.fw-latest}" : ""); color: Theme.text2; font-family: Theme.mono-font; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
+                    if Hb.update-available: Text { text: "UPDATE AVAILABLE"; color: Theme.amber; font-family: Theme.display-font; font-size: 11px; font-weight: 700; letter-spacing: 1px; vertical-alignment: center; }
+                }
+                if Hb.update-available: Text {
+                    text: "To update: hold BOOT, tap RESET — the flash button appears once the bootloader is detected.";
+                    color: Theme.text3;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+        }
 
         Rectangle { }
 

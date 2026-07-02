@@ -550,6 +550,18 @@ export global Hb {
     in property <int> learn-remaining-s: 0;
     in property <float> learn-progress: 0; // 0..1, elapsed / total duration
 
+    // Firmware updates: the handbrake's app image ships in the same
+    // firmware-v* GitHub release as the DDU's (asset pith-hb-<board>.bin).
+    // No OTA on this device — flashing goes over the ROM bootloader, so the
+    // user puts it in download mode (hold BOOT, tap RESET) and the flash card
+    // appears on the connect sub-screen while the bootloader port is present.
+    in property <string> fw-latest: "";          // newest published version, e.g. "v0.11.0"
+    in property <bool> update-available: false;  // fw-latest > connected fw-version
+    in property <bool> bootloader-present: false; // ROM download-mode port detected
+    in property <bool> flashing: false;
+    in property <float> flash-progress: 0;       // 0..1 download+flash
+    in property <string> flash-status: "";
+
     callback auto-cal-start-requested();
     callback auto-cal-cancel-requested();
     callback set-deadzone(int, int);
@@ -557,4 +569,5 @@ export global Hb {
     callback save-requested();
     callback cancel-requested();
     callback reset-requested();
+    callback flash-latest-requested();
 }

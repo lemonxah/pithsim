@@ -11,11 +11,19 @@ use std::time::{Duration, Instant};
 use slint::ComponentHandle;
 
 use pith_hb_core::proto;
-use pith_device::{device_present, Handbrake, PID_HANDBRAKE, PITH_VID};
+use pith_device::{device_present, Handbrake, Serial, PID_HANDBRAKE, PITH_VID};
 
 use crate::ctx::Ctx;
+use crate::firmware::semver_cmp;
+use crate::net::http::http_download_file;
+use crate::paths::cache_dir;
 use crate::ui_bridge::sstr;
 use crate::{AppWindow, Hb, HbPage};
+
+/// The handbrake's ROM download-mode USB identity (ESP32-S2 native bootloader,
+/// enumerates as a CDC serial port — distinct from the app firmware's 0x8001).
+const HB_BOOT_PID: &str = "0002";
+const HB_BOOT_VID: &str = "303a";
 
 const TELEM_TIMEOUT_MS: u64 = 100;
 // ~8 misses * 100ms timeout = 800ms of telemetry silence before we bother
@@ -87,7 +95,131 @@ pub fn wire_hb_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
         move || c.send_hb(HbOutbound::Reset)
     });
 
+    hb.on_flash_latest_requested({
+        let c = ctx.clone();
+        move || flash_hb_latest(&c)
+    });
+
     hb.set_device_found(device_present(PITH_VID, PID_HANDBRAKE));
+}
+
+/// Refresh the handbrake's "update available" state from the fetched releases
+/// (the newest release that carries a pith-hb-*.bin asset) vs the firmware
+/// version last reported by the connected handbrake's @CAP.
+pub fn recompute_hb_update(ui: &AppWindow, s: &crate::state::State) {
+    let hb = ui.global::<Hb>();
+    let latest = s
+        .releases
+        .iter()
+        .find(|r| !r.hb_bin.is_empty())
+        .map(|r| r.tag.clone());
+    match latest {
+        Some(tag) => {
+            hb.set_fw_latest(sstr(&if tag.starts_with('v') {
+                tag.clone()
+            } else {
+                format!("v{tag}")
+            }));
+            hb.set_update_available(!s.hb_fw.is_empty() && semver_cmp(&tag, &s.hb_fw) > 0);
+        }
+        None => {
+            hb.set_fw_latest(sstr(""));
+            hb.set_update_available(false);
+        }
+    }
+}
+
+/// The serial device path of a handbrake sitting in ROM download mode, if one
+/// is plugged in right now.
+fn hb_bootloader_port() -> Option<String> {
+    Serial::list()
+        .into_iter()
+        .find(|p| p.vid == HB_BOOT_VID && p.pid == HB_BOOT_PID)
+        .map(|p| p.device)
+}
+
+/// Download the newest pith-hb app image and flash it to the handbrake's
+/// factory app partition over the ROM bootloader (espflash write-bin). The
+/// device must already be in download mode — the connect sub-screen only
+/// offers the button while the bootloader port is present.
+fn flash_hb_latest(ctx: &Arc<Ctx>) {
+    let ui = match ctx.ui.upgrade() {
+        Some(u) => u,
+        None => return,
+    };
+    let hb = ui.global::<Hb>();
+    if hb.get_flashing() {
+        return;
+    }
+    let (tag, url) = {
+        let s = ctx.lock();
+        match s
+            .releases
+            .iter()
+            .find(|r| !r.hb_bin.is_empty())
+            .and_then(|r| r.hb_bin.values().next().map(|u| (r.tag.clone(), u.clone())))
+        {
+            Some(x) => x,
+            None => {
+                hb.set_flash_status(sstr("No published handbrake firmware found"));
+                return;
+            }
+        }
+    };
+    let port = match hb_bootloader_port() {
+        Some(p) => p,
+        None => {
+            hb.set_flash_status(sstr("Bootloader not detected — hold BOOT, tap RESET first"));
+            return;
+        }
+    };
+    hb.set_flashing(true);
+    hb.set_flash_progress(0.0);
+    hb.set_flash_status(sstr(&format!("Downloading {tag}…")));
+
+    let ctx = ctx.clone();
+    ctx.clone().spawn(async move {
+        let out = cache_dir().join(format!("pith-hb-{tag}.bin"));
+        let pc = ctx.clone();
+        let ok = http_download_file(&url, &out, move |frac| {
+            // download is the first half of the progress bar
+            pc.ui_run(move |u| u.global::<Hb>().set_flash_progress(frac as f32 * 0.5));
+        })
+        .await;
+        if !ok || !out.exists() {
+            ctx.ui_run(|u| {
+                let hb = u.global::<Hb>();
+                hb.set_flashing(false);
+                hb.set_flash_status(sstr("Download failed"));
+            });
+            return;
+        }
+        ctx.ui_run(|u| {
+            let hb = u.global::<Hb>();
+            hb.set_flash_progress(0.5);
+            hb.set_flash_status(sstr("Flashing over the ROM bootloader…"));
+        });
+        // The app lives in the single `factory` partition at 0x10000 (no OTA
+        // slots) — writing the app image there is the whole update.
+        let status = tokio::process::Command::new("espflash")
+            .args(["write-bin", "0x10000", &out.to_string_lossy(), "--port", &port])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await;
+        let ok = status.map(|s| s.success()).unwrap_or(false);
+        ctx.ui_run(move |u| {
+            let hb = u.global::<Hb>();
+            hb.set_flashing(false);
+            hb.set_flash_progress(if ok { 1.0 } else { 0.0 });
+            hb.set_flash_status(sstr(if ok {
+                "Flashed — tap RESET to boot the new firmware"
+            } else {
+                "Flash failed — is espflash installed? Re-enter bootloader mode and retry"
+            }));
+        });
+    });
 }
 
 /// Tracks an in-progress auto-calibration learn window: the observed raw
@@ -138,8 +270,14 @@ pub fn hb_device_loop(ctx: Arc<Ctx>) {
             if last_scan.elapsed() >= PRESENCE_SCAN_INTERVAL {
                 last_scan = Instant::now();
                 let found = device_present(PITH_VID, PID_HANDBRAKE);
+                // A handbrake in ROM download mode enumerates as a serial port
+                // instead of the HID device — surface it so the connect screen
+                // can offer the firmware-flash card.
+                let boot = hb_bootloader_port().is_some();
                 ctx.ui_run(move |u| {
-                    u.global::<Hb>().set_device_found(found);
+                    let hb = u.global::<Hb>();
+                    hb.set_device_found(found);
+                    hb.set_bootloader_present(boot);
                 });
                 if found {
                     try_connect(&ctx, &mut dev);
@@ -229,6 +367,8 @@ fn apply_caps(ctx: &Arc<Ctx>, caps: &[(String, String)]) {
     let board = get("board");
     let fw = get("fw");
     let serial = get("serial");
+    ctx.lock().hb_fw = fw.clone();
+    let c2 = ctx.clone();
     ctx.ui_run(move |u| {
         let hb = u.global::<Hb>();
         hb.set_board(sstr(&board));
@@ -236,6 +376,8 @@ fn apply_caps(ctx: &Arc<Ctx>, caps: &[(String, String)]) {
         hb.set_serial(sstr(&serial));
         hb.set_connected(true);
         hb.set_conn_detail(sstr(""));
+        hb.set_bootloader_present(false); // app firmware is running, not the ROM
+        recompute_hb_update(&u, &c2.lock());
     });
 }
 

@@ -54,25 +54,40 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                             .unwrap_or(raw_tag)
                             .to_string(),
                         board_bin: Default::default(),
+                        hb_bin: Default::default(),
                     };
                     if let Some(assets) = r.get("assets").and_then(|a| a.as_array()) {
                         for a in assets {
                             let name = a.get("name").and_then(|x| x.as_str()).unwrap_or("");
-                            if name.starts_with("pithddu-")
-                                && name.len() > 12
-                                && name.ends_with(".bin")
+                            if !name.ends_with(".bin") {
+                                continue;
+                            }
+                            let url = a
+                                .get("browser_download_url")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("")
+                                .to_string();
+                            // One release carries every device's firmware, told
+                            // apart by asset prefix: pithddu-<board>.bin (DDU),
+                            // pith-hb-<board>.bin (handbrake).
+                            if let Some(board) = name
+                                .strip_prefix("pith-hb-")
+                                .and_then(|b| b.strip_suffix(".bin"))
                             {
-                                let board = name[8..name.len() - 4].to_string();
-                                let url = a
-                                    .get("browser_download_url")
-                                    .and_then(|x| x.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                fr.board_bin.insert(board, url);
+                                if !board.is_empty() {
+                                    fr.hb_bin.insert(board.to_string(), url);
+                                }
+                            } else if let Some(board) = name
+                                .strip_prefix("pithddu-")
+                                .and_then(|b| b.strip_suffix(".bin"))
+                            {
+                                if !board.is_empty() {
+                                    fr.board_bin.insert(board.to_string(), url);
+                                }
                             }
                         }
                     }
-                    if !fr.tag.is_empty() && !fr.board_bin.is_empty() {
+                    if !fr.tag.is_empty() && (!fr.board_bin.is_empty() || !fr.hb_bin.is_empty()) {
                         rels.push(fr);
                     }
                 }
@@ -110,6 +125,7 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
             }));
             update_release_board_match(&u, &s);
             recompute_update_available(&u, &s);
+            crate::hb::recompute_hb_update(&u, &s);
         });
     });
 }

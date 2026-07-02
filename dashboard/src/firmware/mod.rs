@@ -3,7 +3,8 @@ pub mod ota;
 
 pub const APP_FW_VERSION: &str = "0.9.9";
 // Monorepo: the firmware source lives in the `firmware/` subdir; releases are
-// tagged `firmware-v*` (the dashboard filters them by the `pithddu-*.bin` asset).
+// tagged `firmware-v*`; one release carries every device's image, told apart
+// by asset name (`pithddu-<board>.bin` DDU, `pith-hb-<board>.bin` handbrake).
 pub const FIRMWARE_GIT_URL: &str = "https://github.com/lemonxah/pithsim.git";
 pub const FIRMWARE_RELEASES_URL: &str =
     "https://api.github.com/repos/lemonxah/pithsim/releases";

@@ -85,9 +85,12 @@ version:
     echo "latest tags:"
     git tag -l --sort=-v:refname 2>/dev/null | head -5 | sed 's/^/  /' || true
 
-# Cut a release for ONE stream: bump that crate's Cargo.toml version, commit, tag,
-# and push (CI builds the bins from the tag and publishes the GitHub Release). The
-# tag prefix + the crate version stay in sync.
+# Cut a release for ONE stream: bump the stream's Cargo.toml version(s), commit,
+# tag, and push (CI builds the bins from the tag and publishes the GitHub
+# Release). The tag prefix + the crate versions stay in sync. The `firmware`
+# stream covers EVERY device firmware (DDU + handbrake share one version), so a
+# single firmware-v* release carries an asset per device (pithddu-*.bin,
+# pith-hb-*.bin) and the dashboard can update all connected hardware from it.
 #   just release dashboard          -> bump patch of the latest dashboard-v* tag
 #   just release firmware           -> bump patch of the latest firmware-v* tag
 #   just release dashboard 1.2.3    -> release that stream exactly at 1.2.3
@@ -96,10 +99,9 @@ release stream version="":
     set -euo pipefail
     stream="{{stream}}"
     case "$stream" in
-        dashboard) manifest="dashboard/Cargo.toml" ;;
-        firmware)  manifest="firmware/ddu/Cargo.toml" ;;
-        handbrake) manifest="firmware/handbrake/Cargo.toml" ;;
-        *) echo "usage: just release <dashboard|firmware|handbrake> [version]" >&2; exit 1 ;;
+        dashboard) manifests=(dashboard/Cargo.toml) ;;
+        firmware)  manifests=(firmware/ddu/Cargo.toml firmware/handbrake/Cargo.toml) ;;
+        *) echo "usage: just release <dashboard|firmware> [version]" >&2; exit 1 ;;
     esac
     git fetch --tags --quiet
     ver="{{version}}"
@@ -108,7 +110,7 @@ release stream version="":
         if [ -n "$last" ]; then
             base=${last#${stream}-v}                 # bump the latest stream tag
         else
-            base=$(grep -m1 '^version' "$manifest" | sed -E 's/version *= *"([^"]+)".*/\1/')
+            base=$(grep -m1 '^version' "${manifests[0]}" | sed -E 's/version *= *"([^"]+)".*/\1/')
         fi                                            # no tag yet → bump Cargo.toml
         IFS='.' read -r MA MI PA <<<"$base"
         ver="${MA:-0}.${MI:-0}.$(( ${PA:-0} + 1 ))"
@@ -119,11 +121,13 @@ release stream version="":
         echo "tag $tag already exists — pick another version" >&2
         exit 1
     fi
-    # Bump the crate's [package] version (the first version line in its Cargo.toml).
-    sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${ver}\"/" "$manifest"
+    # Bump each crate's [package] version (the first version line in its Cargo.toml).
+    for manifest in "${manifests[@]}"; do
+        sed -i -E "0,/^version = \"[^\"]+\"/s//version = \"${ver}\"/" "$manifest"
+    done
     branch=$(git rev-parse --abbrev-ref HEAD)
     echo "Releasing $tag from $branch @ $(git rev-parse --short HEAD)"
-    git commit -m "release: ${stream} v${ver}" -- "$manifest"
+    git commit -m "release: ${stream} v${ver}" -- "${manifests[@]}"
     git tag -a "$tag" -m "release ${tag}"
     git push origin "$branch" "$tag"
     echo "Pushed $branch + $tag — GitHub Actions will build and publish the release."

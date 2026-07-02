@@ -168,7 +168,11 @@ pub struct CarItem {
 #[derive(Clone, Default)]
 pub struct FwRelease {
     pub tag: String,
+    /// DDU app images by board id (`pithddu-<board>.bin` assets).
     pub board_bin: BTreeMap<String, String>,
+    /// Handbrake app images by board id (`pith-hb-<board>.bin` assets) — the
+    /// same firmware-v* release carries every device's firmware.
+    pub hb_bin: BTreeMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -257,6 +261,7 @@ pub struct State {
     pub board: i32,
 
     pub device_fw: String,
+    pub hb_fw: String, // handbrake firmware version (from its @CAP), for update checks
     pub serial_ports: Vec<crate::device::PortInfo>,
     pub releases: Vec<FwRelease>,
 
@@ -359,6 +364,7 @@ impl Default for State {
             boards: Vec::new(),
             board: 0,
             device_fw: String::new(),
+            hb_fw: String::new(),
             serial_ports: Vec::new(),
             releases: Vec::new(),
             device_log: Vec::new(),
