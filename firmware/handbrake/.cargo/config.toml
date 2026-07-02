@@ -1,0 +1,21 @@
+[build]
+target = "xtensa-esp32s2-espidf"
+
+[target.xtensa-esp32s2-espidf]
+linker = "ldproxy"
+runner = "espflash flash --monitor"
+# espidf_time64: ESP-IDF >= 5.x uses 64-bit time_t.
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32s2"
+# esp-idf-sys manages its own fully recursive clone of this version under .embuild/.
+ESP_IDF_VERSION = "v5.3.3"
+# Copy partitions.csv into esp-idf-sys's synthetic project dir so the custom
+# partition table (CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv")
+# resolves — esp-idf looks it up relative to THAT dir, not our crate root.
+ESP_IDF_GLOB_PARTITION_BASE = { value = ".", relative = true }
+ESP_IDF_GLOB_PARTITION_CSV = "partitions.csv"

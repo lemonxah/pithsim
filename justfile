@@ -1,8 +1,20 @@
-# pithddu-dashboard tasks. Run `just` to list.
+# pithsim tasks. Run `just` to list.
 set shell := ["bash", "-uc"]
 
 default:
     @just --list
+
+# Host unit tests for the handbrake's shared calibration/protocol crate.
+hb-test:
+    cargo test -p pith-hb-core
+
+# Build the handbrake firmware (debug). Needs the esp toolchain.
+hb-firmware-build:
+    cd firmware/handbrake && cargo build
+
+# Build + flash the handbrake firmware (ROM download mode: hold BOOT, tap RESET).
+hb-flash port="":
+    cd firmware/handbrake && just flash {{ port }}
 
 # Build the SimHub plugin (net48) and install the DLL into the SimHub folder.
 # Builds on Linux against a Wine SimHub prefix — no Windows/Mono needed. Override
@@ -65,7 +77,7 @@ version:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "crate versions (Cargo.toml):"
-    for f in dashboard firmware/ddu pith-core pith-ui pith-device pith-flash pith-shm-bridge; do
+    for f in dashboard firmware/ddu firmware/handbrake pith-core pith-hb-core pith-ui pith-device pith-flash pith-shm-bridge; do
         [ -f "$f/Cargo.toml" ] || continue
         v=$(grep -m1 '^version' "$f/Cargo.toml" | sed -E 's/version *= *"([^"]+)".*/\1/')
         printf "  %-16s %s\n" "$f" "${v:-?}"
@@ -86,7 +98,8 @@ release stream version="":
     case "$stream" in
         dashboard) manifest="dashboard/Cargo.toml" ;;
         firmware)  manifest="firmware/ddu/Cargo.toml" ;;
-        *) echo "usage: just release <dashboard|firmware> [version]" >&2; exit 1 ;;
+        handbrake) manifest="firmware/handbrake/Cargo.toml" ;;
+        *) echo "usage: just release <dashboard|firmware|handbrake> [version]" >&2; exit 1 ;;
     esac
     git fetch --tags --quiet
     ver="{{version}}"
@@ -131,7 +144,7 @@ aur-publish:
     ver=$(grep -m1 '^version' dashboard/Cargo.toml | sed -E 's/version *= *"([^"]+)".*/\1/')
     ver=${ver#v}
     if [ -z "$ver" ]; then echo "could not read version from dashboard/Cargo.toml" >&2; exit 1; fi
-    base="https://github.com/lemonxah/pithddu/releases/download/dashboard-v${ver}"
+    base="https://github.com/lemonxah/pithsim/releases/download/dashboard-v${ver}"
     echo "AUR publish: dashboard ${ver}"
 
     # Wait for CI to publish the release assets that updpkgsums will hash.

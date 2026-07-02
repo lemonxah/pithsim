@@ -1,0 +1,15 @@
+# --- pith-hb defaults (ESP32-S2, Rust build) ---
+
+# Console on UART0: the native USB-OTG peripheral is owned by our TinyUSB
+# composite device (CDC + HID) and S2 has no separate USB-Serial-JTAG
+# peripheral to fall back on, so console can't use USB. Attach a 3.3V
+# USB-UART adapter to UART0 to see logs.
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+
+# 4 MB flash (Lolin S2 Mini) with a small custom partition table: nvs + a
+# single factory app partition. No OTA slots — flashing is manual via
+# espflash in ROM download mode (hold BOOT, tap RESET).
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"

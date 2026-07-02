@@ -1,0 +1,40 @@
+[package]
+name = "pith-hb-firmware"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+rust-version = "1.77"
+description = "Pith Handbrake firmware (ESP32-S2 / Lolin S2 Mini): HX711 load cell -> USB HID axis"
+repository = "https://github.com/lemonxah/pithsim"
+license = "MIT"
+
+[[bin]]
+name = "pith-hb"
+path = "src/main.rs"
+
+# Own workspace (own esp toolchain + xtensa target); excluded from the monorepo
+# root workspace. The shared crate is a path-dep into the repo root.
+[workspace]
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[dependencies]
+log = "0.4"
+# esp-idf-svc re-exports esp-idf-hal as `esp_idf_svc::hal` — no separate dep needed.
+esp-idf-svc = "0.51"
+pith-hb-core = { path = "../../pith-hb-core" }
+
+[build-dependencies]
+embuild = "0.33"
+
+# USB stack: a local C shim over raw `espressif/tinyusb` (components/pith_hb_usb),
+# NOT esp_tinyusb — see pithddu's firmware for why (FreeRTOS OSAL/packed-struct
+# bindgen walls). bindgen only processes the shim's clean header.
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/pith_hb_usb"]
+bindings_header = "components/pith_hb_usb/include/pith_hb_usb.h"

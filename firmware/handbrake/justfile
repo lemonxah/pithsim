@@ -1,0 +1,32 @@
+# pith-hb-firmware tasks (Rust / esp-idf). Run `just` to list.
+# Source the esp env first:  source ~/export-esp.sh
+set shell := ["bash", "-uc"]
+
+default:
+    @just --list
+
+# Build the firmware (debug).
+build:
+    cargo build
+
+# Build optimized.
+release-build:
+    cargo build --release
+
+# Build + flash bootloader + partition table + app in one shot (no OTA slots
+# to juggle — this device owns the whole flash). Put the board into ROM
+# download mode first: hold BOOT, tap RESET.
+flash port="":
+    cargo build --release
+    espflash flash {{ if port != "" { "-p " + port } else { "" } }} \
+        target/xtensa-esp32s2-espidf/release/pith-hb
+
+# Save a standalone app image (for re-flashing without rebuilding).
+image:
+    cargo build --release
+    espflash save-image --chip esp32s2 \
+        target/xtensa-esp32s2-espidf/release/pith-hb pith-hb-s2mini.bin
+
+# Serial monitor only (UART0 console — the USB port is owned by CDC+HID).
+monitor port="":
+    espflash monitor {{ if port != "" { "-p " + port } else { "" } }}

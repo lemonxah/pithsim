@@ -1,0 +1,8 @@
+[package]
+name = "pith-hb-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared calibration math + wire protocol for the pith-hb handbrake (firmware + dashboard)."
+license = "MIT"
+
+[dependencies]

@@ -1,0 +1,17 @@
+# --- Rust / cargo ---
+/target/
+/.embuild/
+Cargo.lock
+
+# --- ESP-IDF build artifacts ---
+/build/
+sdkconfig
+sdkconfig.old
+managed_components/
+dependencies.lock
+.cache/
+
+# --- misc ---
+*.swp
+.DS_Store
+pith-hb-*.bin

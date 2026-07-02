@@ -1,14 +1,16 @@
-# pithddu monorepo — host workspace.
+# pithsim monorepo — host workspace for all Pith sim-racing gear (DDU,
+# handbrake, future active pedals).
 #
-# The firmware is a separate sub-workspace (its own esp toolchain + xtensa target
-# via firmware/.cargo + firmware/rust-toolchain.toml), so it is EXCLUDED here and
-# built with `cd firmware/ddu `cd firmware && cargo build``cd firmware && cargo build` cargo build`. The shared crates (pith-core, pith-ui)
-# are no_std and host-testable, so they're members of this workspace AND path-
-# depended by the firmware.
+# Each device's firmware is a separate sub-workspace under firmware/<device>
+# (its own esp toolchain + xtensa target via .cargo + rust-toolchain.toml), so
+# firmware/ is EXCLUDED here and built with `cd firmware/<device> && cargo
+# build`. The shared crates (pith-core, pith-ui, pith-hb-core) are host-
+# testable, so they're members of this workspace AND path-depended by the
+# firmwares.
 [workspace]
 resolver = "2"
-members = ["dashboard", "pith-core", "pith-sim", "pith-ui", "pith-bios", "pith-device", "pith-flash"]
-# firmware: separate esp toolchain. pith-shm-bridge: Windows-only (Proton-Wine
+members = ["dashboard", "pith-core", "pith-hb-core", "pith-sim", "pith-ui", "pith-bios", "pith-device", "pith-flash"]
+# firmware: separate esp toolchains. pith-shm-bridge: Windows-only (Proton-Wine
 # in-prefix tools), built with `--target x86_64-pc-windows-gnu`.
 exclude = ["firmware", "pith-recovery", "pith-shm-bridge"]
 
