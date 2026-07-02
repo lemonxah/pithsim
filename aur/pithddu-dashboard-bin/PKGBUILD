@@ -24,6 +24,14 @@ package() {
   install -Dm755 pith-dashboard "$pkgdir/usr/bin/pith-dashboard"
   install -Dm644 pith-dashboard.desktop "$pkgdir/usr/share/applications/pith-dashboard.desktop"
   install -Dm644 icon.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/pith-dashboard.png"
+  # udev rules for ALL Pith gear (DDU, handbrake, their ROM bootloaders) — the
+  # app needs the hidraw nodes user-accessible out of the box. Ships in the
+  # release tarball as 99-pith.rules (older tarballs: 99-pithddu.rules).
+  if [ -f 99-pith.rules ]; then
+    install -Dm644 99-pith.rules "$pkgdir/usr/lib/udev/rules.d/99-pith.rules"
+  elif [ -f 99-pithddu.rules ]; then
+    install -Dm644 99-pithddu.rules "$pkgdir/usr/lib/udev/rules.d/99-pith.rules"
+  fi
 
   # In-prefix shared-memory tools (Windows .exe, run under Proton/Wine) + the Steam
   # launch wrapper. This is just the package's canonical copy — pith-shim-run

@@ -46,6 +46,24 @@ pithsim/
                 preview. no_std.
 ```
 
+## Quick start
+
+```sh
+# Arch/AUR (prebuilt binary; installs udev rules system-wide)
+yay -S pithddu-dashboard-bin
+
+# Any other distro: grab pith-dashboard-linux-x86_64.tar.gz from the latest
+# dashboard-v* release, then install the udev rules once:
+sudo cp 99-pith.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
+```
+
+Plug in any Pith device and launch `pith-dashboard` — every connected device
+shows up as a status card at the bottom of the sidebar, and each gets its own
+page. **Firmware updates for all devices come from one `firmware-v*` release**:
+the DDU updates over USB OTA straight from its Firmware page; the handbrake's
+page shows "update available" and flashes over the ROM bootloader (hold BOOT,
+tap RESET, click flash — the dashboard does the rest).
+
 ## Screenshots
 
 | Overview | Telemetry UDP | Race-screen editor |

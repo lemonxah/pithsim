@@ -23,7 +23,15 @@ jobs:
             libxcb-xfixes0-dev libgl1-mesa-dev libegl1-mesa-dev
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+
+      # Quality gates: formatting + zero clippy warnings across the workspace.
+      - name: rustfmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace -- -D warnings
 
       # Every host workspace member — includes the game-decoder regression tests
       # in pith-sim and the dashboard's built-in-profile tests (pith-dashboard is
@@ -50,7 +58,7 @@ jobs:
         run: |
           mkdir -p pith-dashboard-linux-x86_64
           cp target/release/pith-dashboard pith-dashboard-linux-x86_64/
-          cp dashboard/pith-dashboard.desktop dashboard/icon.png dashboard/install-desktop.sh dashboard/99-pithddu.rules pith-dashboard-linux-x86_64/ || true
+          cp dashboard/pith-dashboard.desktop dashboard/icon.png dashboard/install-desktop.sh dashboard/99-pith.rules pith-dashboard-linux-x86_64/
           tar -czf pith-dashboard-linux-x86_64.tar.gz pith-dashboard-linux-x86_64
 
       - name: Package .deb (best-effort)

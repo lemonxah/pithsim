@@ -201,7 +201,7 @@ fn flash_hb_latest(ctx: &Arc<Ctx>) {
         });
         // The app lives in the single `factory` partition at 0x10000 (no OTA
         // slots) — writing the app image there is the whole update.
-        let status = tokio::process::Command::new("espflash")
+        let output = tokio::process::Command::new("espflash")
             .args([
                 "write-bin",
                 "0x10000",
@@ -210,19 +210,36 @@ fn flash_hb_latest(ctx: &Arc<Ctx>) {
                 &port,
             ])
             .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
+            .output()
             .await;
-        let ok = status.map(|s| s.success()).unwrap_or(false);
+        // Surface the real failure, not a guess: espflash missing vs its own
+        // last error line (port busy, wrong mode, etc.).
+        let (ok, detail) = match &output {
+            Ok(o) if o.status.success() => (true, String::new()),
+            Ok(o) => {
+                let text = String::from_utf8_lossy(&o.stderr);
+                let last = text
+                    .lines()
+                    .rev()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("espflash failed")
+                    .trim()
+                    .to_string();
+                (false, last)
+            }
+            Err(_) => (
+                false,
+                "espflash not found — install it (cargo install espflash)".to_string(),
+            ),
+        };
         ctx.ui_run(move |u| {
             let hb = u.global::<Hb>();
             hb.set_flashing(false);
             hb.set_flash_progress(if ok { 1.0 } else { 0.0 });
-            hb.set_flash_status(sstr(if ok {
-                "Flashed — tap RESET to boot the new firmware"
+            hb.set_flash_status(sstr(&if ok {
+                "Flashed — tap RESET to boot the new firmware".to_string()
             } else {
-                "Flash failed — is espflash installed? Re-enter bootloader mode and retry"
+                format!("Flash failed: {detail}")
             }));
         });
     });
