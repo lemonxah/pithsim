@@ -1,7 +1,8 @@
 // Overview / home (HANDOFF.md §9).
 import { Theme } from "../theme.slint";
-import { AppState, Page, Telemetry, ShiftCfg, Firmware, CarLib, DeviceCaps, RaceLayout } from "../models.slint";
+import { AppState, Page, Telemetry, ShiftCfg, Firmware, CarLib, DeviceCaps, RaceLayout, Hb } from "../models.slint";
 import { Card, PrimaryButton, Dot, Mono } from "../widgets.slint";
+import { GearCard } from "../components/chrome.slint";
 
 component QuickCard inherits Rectangle {
     callback clicked;
@@ -43,6 +44,37 @@ export component OverviewScreen inherits Rectangle {
                             color: Theme.text3; font-size: 10px; horizontal-alignment: right;
                         }
                     }
+                }
+            }
+            // Connected devices — every Pith device, not just the DDU (the
+            // detailed banner below stays DDU-specific: resolution etc. only
+            // make sense for that device).
+            VerticalLayout {
+                spacing: 8px;
+                Text { text: "CONNECTED DEVICES"; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
+                HorizontalLayout {
+                    spacing: 16px;
+                    GearCard {
+                        width: 260px;
+                        name: AppState.device-name;
+                        connected: AppState.connected;
+                        detail: AppState.conn-detail;
+                        serial: AppState.serial;
+                        fw: AppState.fw-version;
+                        active: AppState.page == Page.overview;
+                        clicked => { AppState.page = Page.device; }
+                    }
+                    GearCard {
+                        width: 260px;
+                        name: "Pith Handbrake";
+                        connected: Hb.connected;
+                        detail: Hb.connected ? Hb.board : (Hb.device-found ? "Detected — connecting…" : "Disconnected");
+                        serial: Hb.serial;
+                        fw: Hb.fw-version != "" ? "v" + Hb.fw-version : "";
+                        active: false;
+                        clicked => { AppState.page = Page.handbrake; }
+                    }
+                    Rectangle { }
                 }
             }
             // device status banner
