@@ -241,17 +241,6 @@ export component Sidebar inherits Rectangle {
         NavRow { glyph: "◈"; label: "Car Library"; active: AppState.page == Page.cars; clicked => { AppState.page = Page.cars; } }
         NavRow { glyph: "⇅"; label: "Telemetry UDP"; active: AppState.page == Page.udp; clicked => { AppState.page = Page.udp; } }
         NavRow { glyph: "⬡"; label: "Firmware"; active: AppState.page == Page.firmware; dot: Firmware.update-available; clicked => { AppState.page = Page.firmware; } }
-        Rectangle { height: 10px; }
-        Text {
-            text: "GEAR";
-            color: Theme.text3;
-            font-family: Theme.display-font;
-            font-size: 11px;
-            font-weight: 600;
-            letter-spacing: 1.6px;
-        }
-        Rectangle { height: 6px; }
-        NavRow { glyph: "⬓"; label: "Handbrake"; active: AppState.page == Page.handbrake; dot: Hb.connected; clicked => { AppState.page = Page.handbrake; } }
         Rectangle { }  // spacer
         // Connected-gear card list: one status card per Pith device, pinned to
         // the bottom of the sidebar. Click a card to open that device's page.
