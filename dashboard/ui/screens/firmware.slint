@@ -1,8 +1,56 @@
 // Firmware — live device version, OTA update + local build (pick your controller).
 import { Theme } from "../theme.slint";
-import { AppState, Firmware, FwState, FwComponent, DeviceCaps, DeviceCfg } from "../models.slint";
-import { Card, PrimaryButton, GhostButton, ToggleSwitch, SectionLabel, Mono, FlipCombo } from "../widgets.slint";
+import { AppState, Firmware, FwState, FwComponent, DeviceCaps, DeviceCfg, Hb } from "../models.slint";
+import { Card, PrimaryButton, GhostButton, ToggleSwitch, SectionLabel, Mono, FlipCombo, Dot } from "../widgets.slint";
 import { CheckBox } from "std-widgets.slint";
+
+// One device's firmware summary + one-click update (top of the page — every
+// connected Pith device updates from here independently, not just the DDU).
+component DeviceFirmwareCard inherits Rectangle {
+    in property <string> name;
+    in property <bool> connected: false;
+    in property <string> current: "";
+    in property <string> latest: "";
+    in property <bool> update-available: false;
+    in property <bool> busy: false;
+    in property <string> busy-label: "UPDATING…";
+    callback install();
+    height: 92px;
+    background: Theme.panel;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: update-available ? Theme.accent : Theme.line;
+    HorizontalLayout {
+        padding: 16px;
+        spacing: 14px;
+        VerticalLayout {
+            spacing: 6px;
+            horizontal-stretch: 1;
+            HorizontalLayout {
+                spacing: 7px;
+                VerticalLayout { alignment: center; Dot { tint: root.connected ? Theme.green : Theme.text3; } }
+                Text { text: root.name; color: Theme.text; font-family: Theme.display-font; font-size: 14px; font-weight: 600; vertical-alignment: center; }
+            }
+            Text {
+                text: !root.connected ? "Not connected"
+                    : root.current == "" ? "—"
+                    : root.update-available ? root.current + " → " + root.latest
+                    : "Up to date · " + root.current;
+                color: root.update-available ? Theme.accent-soft : Theme.text3;
+                font-family: Theme.mono-font;
+                font-size: 12px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            if root.connected && root.update-available: PrimaryButton {
+                text: root.busy ? root.busy-label : "INSTALL " + root.latest;
+                enabled: !root.busy;
+                clicked => { root.install(); }
+            }
+        }
+    }
+}
 
 export component FirmwareScreen inherits Rectangle {
     property <bool> busy: Firmware.state == FwState.downloading
@@ -26,9 +74,35 @@ export component FirmwareScreen inherits Rectangle {
                 alignment: center;
                 spacing: 3px;
                 Text { text: "Firmware"; color: Theme.text; font-family: Theme.display-font; font-size: 24px; font-weight: 700; }
-                Text { text: AppState.device-name + " · keep connected while flashing"; color: Theme.text3; font-size: 13px; }
+                Text { text: "Every connected device updates independently"; color: Theme.text3; font-size: 13px; }
             }
             Rectangle { }
+        }
+
+        VerticalLayout {
+            spacing: 8px;
+            Text { text: "ALL DEVICES"; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
+            DeviceFirmwareCard {
+                name: AppState.device-name;
+                connected: AppState.connected;
+                current: Firmware.current;
+                latest: Firmware.latest;
+                update-available: Firmware.update-available;
+                busy: root.busy;
+                busy-label: Firmware.state == FwState.downloading ? "DOWNLOADING…"
+                    : Firmware.state == FwState.verifying ? "VERIFYING…" : "FLASHING…";
+                install => { Firmware.select-release(0); Firmware.flash-release(); }
+            }
+            DeviceFirmwareCard {
+                name: "Pith Handbrake";
+                connected: Hb.connected;
+                current: "v" + Hb.fw-version;
+                latest: Hb.fw-latest;
+                update-available: Hb.update-available;
+                busy: Hb.flashing;
+                busy-label: "UPDATING…";
+                install => { Hb.install-update-requested(); }
+            }
         }
 
         HorizontalLayout {
