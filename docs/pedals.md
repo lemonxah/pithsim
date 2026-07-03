@@ -31,11 +31,23 @@ v1 design). Confirmed from that repo:
   `#ifndef USES_ADS1220` to a genuine `<ADS1256.h>` driver (7.68 MHz
   crystal, 2.5V vref) — so ADS1220 (§1 below) is what the *newer* V6/V7 dev
   boards (PCB_VERSION 13/14) use, not this one.
-- **Actuator**: iSV57T integrated servo over RS232 (this board's README
-  explicitly documents servo-power control, an RS232 interface chip, and
-  wiring notes — TX↔TX/RX↔RX to the servo). Stepper pins are still defined
-  in the firmware's pin table for this board but the v2.2 design targets
-  the servo path.
+- **Actuator**: **not the iSV57T** (the reference project's default for this
+  board) — this build uses a **JSSmotor JSS57P2N** (NEMA23 closed-loop
+  stepper / "hybrid servo", 32-bit DSP, closed-loop by default, up to
+  200kHz step rate, 24-48V, 4.2A). Decided control path: **step/dir pulses**
+  on the board's existing `STEPPER_DIR`/`STEPPER_STEP` pins (GPIO37/38,
+  already in `board.rs`) — the JSS57P2N supports this natively, so it needs
+  no new wiring and follows the reference project's *other* actuator
+  architecture (`StepperWithLimits.cpp` on `ChrGri/FastNonAccelStepper`)
+  rather than the from-scratch Modbus RTU driver `isv57communication.cpp`
+  had to write for the iSV57. The JSS57P2N *also* exposes Modbus RTU over
+  RS232 (richer telemetry — position deviation, bus voltage, current) but
+  its exact register map wasn't available from public sources at the time
+  of writing (datasheet PDFs 403'd); step/dir was chosen specifically to
+  avoid needing that reverse-engineered before Phase 2 can start. The
+  board's `ISV57_TX`/`ISV57_RX` RS232 pins (wired for the iSV57 in the
+  reference) go unused by this choice — the RS232 chip is still physically
+  on the board, just not part of this actuator's control path.
 - **Pin map**: reproduced verbatim from the `PCB_VERSION == 9` block into
   `firmware/pedals/src/board.rs`, including two pin-reuse cases
   (GPIO4: MCP4725 DAC I2C SCL *and* brake-resistor control; GPIO6: ADC RST

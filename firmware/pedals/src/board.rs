@@ -35,9 +35,15 @@ pub const ADC_MISO: i32 = 18; // DOUT
 pub const ADC_MOSI: i32 = 17; // DIN
 pub const ADC_CS: i32 = 7;
 
-/// Stepper step/dir — present in the reference firmware's pin table for
-/// this board, but the v2.2 board is normally paired with the iSV57T servo
-/// (see the RS232 pins below); confirm which actuator path is populated.
+/// Actuator control (CONFIRMED path, see docs/pedals.md §0): a JSSmotor
+/// JSS57P2N closed-loop stepper, driven by step/dir pulses on these pins —
+/// not the iSV57T servo this board ships with by default in the reference
+/// project. The JSS57P2N supports step/dir natively (up to 200kHz), so this
+/// needs no new wiring. It also exposes Modbus RTU over RS232 (position
+/// deviation/current telemetry) but that path is NOT used here — its
+/// register map wasn't available from public sources when this was
+/// written, and step/dir avoids needing it reverse-engineered before
+/// Phase 2 can start.
 pub const STEPPER_DIR: i32 = 37;
 pub const STEPPER_STEP: i32 = 38;
 
@@ -51,7 +57,10 @@ pub const PEDAL_ASSIGN_CFG2: i32 = 2;
 
 pub const BUZZER: i32 = 21;
 
-/// UART to the iSV57T servo's RS232 interface chip.
+/// UART to the board's RS232 interface chip — wired for the iSV57T in the
+/// reference project. Unused by this build (JSS57P2N over step/dir instead;
+/// see `STEPPER_DIR`/`STEPPER_STEP`), kept here since the pins/chip are
+/// still physically on the board.
 pub const ISV57_TX: i32 = 10;
 pub const ISV57_RX: i32 = 9;
 
