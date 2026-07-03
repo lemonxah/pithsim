@@ -1,0 +1,37 @@
+# pith-pedals-firmware tasks (Rust / esp-idf). Run `just` to list.
+# Source the esp env first:  source ~/export-esp.sh
+set shell := ["bash", "-uc"]
+
+default:
+    @just --list
+
+# Build the firmware (debug).
+build:
+    cargo build
+
+# Build optimized.
+release-build:
+    cargo build --release
+
+# Build + flash bootloader + partition table (dual OTA slots) + app in one
+# shot. Put the board into ROM download mode first: hold BOOT, tap RESET.
+flash port="":
+    cargo build --release
+    espflash flash --partition-table partitions.csv \
+        {{ if port != "" { "-p " + port } else { "" } }} \
+        target/xtensa-esp32s3-espidf/release/pith-pedals
+
+# Save the app image (what the dashboard streams over @OTA) and the full
+# merged image (bootloader + partition table + app, written at 0x0 in ROM
+# download mode — the recovery/first-flash path). Target: gilphilbert's
+# PCBA V2 board, v2.2 Rev B (ESP32-S3FH4R2) — see docs/pedals.md §0.
+image:
+    cargo build --release
+    espflash save-image --chip esp32s3 \
+        target/xtensa-esp32s3-espidf/release/pith-pedals pith-pedals-pcba_v2.2b.bin
+    espflash save-image --chip esp32s3 --merge --partition-table partitions.csv \
+        target/xtensa-esp32s3-espidf/release/pith-pedals pith-pedals-pcba_v2.2b-full.bin
+
+# Serial monitor only (UART0 console — the USB port is owned by TinyUSB).
+monitor port="":
+    espflash monitor {{ if port != "" { "-p " + port } else { "" } }}

@@ -4,7 +4,7 @@ version = "0.2.0"
 edition = "2021"
 resolver = "2"
 rust-version = "1.77"
-description = "Pith Handbrake firmware (ESP32-S2 / Lolin S2 Mini): HX711 load cell -> USB HID axis"
+description = "Pith Handbrake firmware: HX711 load cell -> USB HID axis. Builds for ESP32-S2 (Lolin S2 Mini, default) or ESP32-S3 (see justfile's build-s3/flash-s3) via --features esp32s3 + a target/MCU override, since the two are different toolchain targets."
 repository = "https://github.com/lemonxah/pithsim"
 license = "MIT"
 
@@ -17,8 +17,8 @@ path = "src/main.rs"
 [workspace]
 
 # Release tuned for latency: the workload is tiny (HX711 at 10 SPS) but O2 +
-# LTO sharpens the USB callback/filter paths, and the 3 MB factory partition
-# has room to spare.
+# LTO sharpens the USB callback/filter paths, and each ~2 MB OTA slot has
+# room to spare.
 [profile.release]
 opt-level = 2
 lto = "thin"
@@ -27,6 +27,17 @@ codegen-units = 1
 [profile.dev]
 debug = true
 opt-level = "z"
+
+[features]
+# Board selection: only changes the `board=` string in the @CAP reply — the
+# HX711 pins (GPIO1/GPIO2) are assumed the same on both chips (both expose
+# them); verify against the actual S3 board's silkscreen before wiring, this
+# is a documented assumption, not a confirmed pinout for a specific board.
+# The chip itself (S2 vs S3) is chosen by --target + MCU, not by this
+# feature — see justfile's build-s3/flash-s3/image-s3.
+default = ["esp32s2"]
+esp32s2 = []
+esp32s3 = []
 
 [dependencies]
 log = "0.4"

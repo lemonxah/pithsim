@@ -167,7 +167,8 @@ fn dispatch(line: &str, rt: &mut Runtime) -> String {
     match proto::parse_host_line(line) {
         Ok(HostCmd::Status) => status_line(rt),
         Ok(HostCmd::Cap) => format!(
-            "OK board=lolin_s2_mini fw={} serial={} proto=1\n",
+            "OK board={} fw={} serial={} proto=1\n",
+            crate::device::board(),
             env!("CARGO_PKG_VERSION"),
             crate::device::serial()
         ),

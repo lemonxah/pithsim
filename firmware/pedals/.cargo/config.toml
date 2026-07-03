@@ -1,27 +1,17 @@
 [build]
-target = "xtensa-esp32s2-espidf"
+target = "xtensa-esp32s3-espidf"
 
-[target.xtensa-esp32s2-espidf]
-linker = "ldproxy"
-runner = "espflash flash --monitor"
-# espidf_time64: ESP-IDF >= 5.x uses 64-bit time_t.
-rustflags = ["--cfg", "espidf_time64"]
-
-# S3 variant (justfile's build-s3/flash-s3/image-s3 override CARGO_BUILD_TARGET
-# to this triple + MCU=esp32s3 below) — needs its own [target.*] section since
-# cargo looks up linker config per-triple; without this it falls back to the
-# raw system linker instead of ldproxy and the esp-idf-sys build script's
-# --ldproxy-* link args fail to parse.
 [target.xtensa-esp32s3-espidf]
 linker = "ldproxy"
 runner = "espflash flash --monitor"
+# espidf_time64: ESP-IDF >= 5.x uses 64-bit time_t.
 rustflags = ["--cfg", "espidf_time64"]
 
 [unstable]
 build-std = ["std", "panic_abort"]
 
 [env]
-MCU = "esp32s2"
+MCU = "esp32s3"
 # esp-idf-sys manages its own fully recursive clone of this version under .embuild/.
 ESP_IDF_VERSION = "v5.3.3"
 # Copy partitions.csv into esp-idf-sys's synthetic project dir so the custom

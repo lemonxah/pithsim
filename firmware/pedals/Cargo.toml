@@ -1,0 +1,44 @@
+[package]
+name = "pith-pedals-firmware"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+rust-version = "1.77"
+description = "Pith active pedal firmware (ESP32-S3): USB HID axis + config/effects command channel. See docs/pedals.md for scope — Phase 1 (this crate): USB/OTA/protocol plumbing. Phase 2 (bench-validated, not yet here): ADS1220 loadcell + stepper/iSV57-servo drive."
+repository = "https://github.com/lemonxah/pithsim"
+license = "MIT"
+
+[[bin]]
+name = "pith-pedals"
+path = "src/main.rs"
+
+# Own workspace (own esp toolchain + xtensa target); excluded from the monorepo
+# root workspace. Shared crates are path-deps into the repo root.
+[workspace]
+
+# Release tuned for the same reasons as the handbrake: O2 + thin LTO sharpens
+# the USB callback/control-loop paths without the size cost of opt-level 3.
+[profile.release]
+opt-level = 2
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = true
+opt-level = "z"
+
+[dependencies]
+log = "0.4"
+esp-idf-svc = "0.51"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+pith-pedals-core = { path = "../../pith-pedals-core" }
+
+[build-dependencies]
+embuild = "0.33"
+
+# USB stack: a local C shim over raw `espressif/tinyusb` (components/pith_pedals_usb),
+# same approach as the handbrake/DDU — see their firmware for why not esp_tinyusb.
+[[package.metadata.esp-idf-sys.extra_components]]
+component_dirs = ["components/pith_pedals_usb"]
+bindings_header = "components/pith_pedals_usb/include/pith_pedals_usb.h"

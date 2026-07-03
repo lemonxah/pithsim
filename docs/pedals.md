@@ -15,18 +15,55 @@ one-shot from a source read, and this doc says explicitly which parts are
 safe to port mechanically vs. which need hardware-in-the-loop validation by
 the user before they touch a real actuator.
 
+## 0. Confirmed target hardware
+
+Building **gilphilbert's "PCBA V2" control board, v2.2 Rev B**
+(`gilphilbert/DIY-Sim-Racing-FFB-Pedal-PCBs`, path `v2/v2.2/RevB`) — an
+integrated control+power board (single PCB, no separate power board like the
+v1 design). Confirmed from that repo:
+
+- **MCU**: ESP32-S3FH4R2 (from the board's BOM CSV) — this is why the pedals
+  firmware targets `xtensa-esp32s3-espidf`, matching the DDU's chip.
+- **Loadcell ADC**: **ADS1256**, not ADS1220. Traced precisely in the
+  reference firmware: this board is `PCB_VERSION == 9` in `ESP32/include/
+  Main.h` (`ControlBoard_PCBA_V2X` PlatformIO env), and that `#if` block
+  never defines `USES_ADS1220`. `LoadCell.cpp` branches on
+  `#ifndef USES_ADS1220` to a genuine `<ADS1256.h>` driver (7.68 MHz
+  crystal, 2.5V vref) — so ADS1220 (§1 below) is what the *newer* V6/V7 dev
+  boards (PCB_VERSION 13/14) use, not this one.
+- **Actuator**: iSV57T integrated servo over RS232 (this board's README
+  explicitly documents servo-power control, an RS232 interface chip, and
+  wiring notes — TX↔TX/RX↔RX to the servo). Stepper pins are still defined
+  in the firmware's pin table for this board but the v2.2 design targets
+  the servo path.
+- **Pin map**: reproduced verbatim from the `PCB_VERSION == 9` block into
+  `firmware/pedals/src/board.rs`, including two pin-reuse cases
+  (GPIO4: MCP4725 DAC I2C SCL *and* brake-resistor control; GPIO6: ADC RST
+  *and* emergency-stop) that exist in the reference source itself — see
+  that module's doc comment before wiring anything to them.
+- Board-specific quirks from that repo's README worth carrying over: pedal
+  role (throttle/brake/clutch) is set by an on-board DIP switch (SW1), the
+  v2.x line requires a hand-soldered brake resistor (not populated by
+  assembly), and first-flash entry uses a "Flash" button (not "Boot").
+
 ## 1. What the reference project actually is
 
 Bigger than a firmware+plugin pair — it's two ESP32 targets, a shared C
 protocol library, and a WPF SimHub plugin:
 
 - **`ESP32/`** — the pedal controller itself (ESP32-S2, since it does
-  `USB_JOYSTICK` HID directly). Owns: ADS1220 loadcell ADC, either a stepper
-  (FastAccelStepper) or an iSV57 servo (Modbus RTU) actuator, admittance
-  (impedance) force control, ABS/RPM/bite-point/G/wheel-slip/road-impact/
-  custom-vibration effect oscillators, USB HID joystick output, USB CDC +
-  ESP-NOW wireless command/telemetry channel, EEPROM config persistence,
-  OTA (both a pull-URL updater and PlatformIO-upload style).
+  `USB_JOYSTICK` HID directly). Owns: an **ADS1220** loadcell ADC (TI 24-bit,
+  via the `ADS1220_WE` library, on a dedicated SPI bus with a hardware DRDY
+  falling-edge interrupt for sample-ready — NOT an HX711; confirmed by
+  grepping the actual source, there's zero HX711 anywhere in this project),
+  either a stepper (`StepperWithLimits.cpp`, on `ChrGri/FastNonAccelStepper`
+  — the maintainer's own fork, not upstream FastAccelStepper) or an iSV57
+  integrated servo (`isv57communication.cpp`, Modbus RTU over a UART at
+  38400 baud) actuator, admittance (impedance) force control, ABS/RPM/
+  bite-point/G/wheel-slip/road-impact/custom-vibration effect oscillators,
+  USB HID joystick output, USB CDC + ESP-NOW wireless command/telemetry
+  channel, EEPROM config persistence, OTA (both a pull-URL updater and
+  PlatformIO-upload style).
 - **`ESP32_master/`** — an optional bridge board: ESP-NOW ↔ USB CDC, so up to
   3 pedals can each be a cheap wireless node reporting through one master's
   USB port instead of each pedal needing its own USB cable to the PC.

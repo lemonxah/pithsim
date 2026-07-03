@@ -36,3 +36,28 @@ image:
 # Serial monitor only (UART0 console — the USB port is owned by CDC+HID).
 monitor port="":
     espflash monitor {{ if port != "" { "-p " + port } else { "" } }}
+
+# ---- ESP32-S3 board variant ----
+# S2 and S3 are different Xtensa targets, so the S3 build needs an explicit
+# --target + MCU override (CARGO_BUILD_TARGET/MCU env vars beat the
+# .cargo/config.toml defaults, which stay S2 since that's the shipped
+# hardware) plus --features esp32s3 to label @CAP's board string correctly.
+
+build-s3:
+    CARGO_BUILD_TARGET=xtensa-esp32s3-espidf MCU=esp32s3 \
+        cargo build --features esp32s3 --no-default-features
+
+flash-s3 port="":
+    CARGO_BUILD_TARGET=xtensa-esp32s3-espidf MCU=esp32s3 \
+        cargo build --release --features esp32s3 --no-default-features
+    espflash flash --partition-table partitions.csv \
+        {{ if port != "" { "-p " + port } else { "" } }} \
+        target/xtensa-esp32s3-espidf/release/pith-hb
+
+image-s3:
+    CARGO_BUILD_TARGET=xtensa-esp32s3-espidf MCU=esp32s3 \
+        cargo build --release --features esp32s3 --no-default-features
+    espflash save-image --chip esp32s3 \
+        target/xtensa-esp32s3-espidf/release/pith-hb pith-hb-esp32s3_devkit.bin
+    espflash save-image --chip esp32s3 --merge --partition-table partitions.csv \
+        target/xtensa-esp32s3-espidf/release/pith-hb pith-hb-esp32s3_devkit-full.bin

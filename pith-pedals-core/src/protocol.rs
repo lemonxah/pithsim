@@ -31,23 +31,34 @@ pub enum PedalId {
 /// matching the source's sections. All the `u8`-percent/`u8`-scaled fields
 /// keep the reference's scale (documented per-field) so behavior matches
 /// the project this is ported from.
+///
+/// Every field is an integer, including ones the reference stores as
+/// `float` (force, curve points) — scaled by 10 (`_x10` fields) instead.
+/// This isn't a style preference: `serde_json` deserializing an `f32`/
+/// `Vec<f32>` field on this crate's `xtensa-esp32s3-espidf` target hits a
+/// genuine LLVM backend bug (`Cannot select: ... XtensaISD::PCREL_WRAPPER
+/// TargetConstantPool ... [2 x float] [-1.0, 1.0]`, reproduced in both
+/// debug and release — not an optimization artifact) inside its float
+/// parser's codegen. Scaled integers sidestep it entirely, and match every
+/// other pith wire struct (the DDU's are 100% integer fields already, for
+/// what may well be the same reason).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PedalConfig {
     // ---- pedal start/end travel, in percent of full physical range ----
     pub pedal_start_pct: u8,
     pub pedal_end_pct: u8,
 
-    // ---- force range ----
-    pub max_force_n: f32,
-    pub preload_force_n: f32,
+    // ---- force range (Newtons x10, one implied decimal) ----
+    pub max_force_n_x10: u16,
+    pub preload_force_n_x10: u16,
 
-    // ---- force-vs-travel curve: up to 11 points, travel/force in percent ----
-    pub curve_travel_pct: Vec<f32>,
-    pub curve_force_pct: Vec<f32>,
+    // ---- force-vs-travel curve: up to 11 points, travel/force in percent x10 ----
+    pub curve_travel_pct_x10: Vec<u16>,
+    pub curve_force_pct_x10: Vec<u16>,
 
-    // ---- joystick output remap curve (also up to 11 points) ----
-    pub joystick_map_orig_pct: Vec<f32>,
-    pub joystick_map_mapped_pct: Vec<f32>,
+    // ---- joystick output remap curve (also up to 11 points, percent x10) ----
+    pub joystick_map_orig_pct_x10: Vec<u16>,
+    pub joystick_map_mapped_pct_x10: Vec<u16>,
 
     // ---- ABS pulsation effect ----
     pub abs_frequency_hz: u8,
@@ -144,16 +155,16 @@ impl PedalConfig {
         PedalConfig {
             pedal_start_pct: 0,
             pedal_end_pct: 100,
-            max_force_n: match pedal_type {
-                PedalId::Brake => 600.0,
-                PedalId::Clutch => 200.0,
-                PedalId::Throttle => 50.0,
+            max_force_n_x10: match pedal_type {
+                PedalId::Brake => 6000,
+                PedalId::Clutch => 2000,
+                PedalId::Throttle => 500,
             },
-            preload_force_n: 0.0,
-            curve_travel_pct: vec![0.0, 100.0],
-            curve_force_pct: vec![0.0, 100.0],
-            joystick_map_orig_pct: vec![0.0, 100.0],
-            joystick_map_mapped_pct: vec![0.0, 100.0],
+            preload_force_n_x10: 0,
+            curve_travel_pct_x10: vec![0, 1000],
+            curve_force_pct_x10: vec![0, 1000],
+            joystick_map_orig_pct_x10: vec![0, 1000],
+            joystick_map_mapped_pct_x10: vec![0, 1000],
             abs_frequency_hz: 12,
             abs_amplitude_kg20: 0,
             abs_sawtooth: false,

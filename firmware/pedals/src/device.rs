@@ -8,28 +8,16 @@ use esp_idf_svc::sys;
 
 static SERIAL: OnceLock<String> = OnceLock::new();
 
-/// Stable device serial, e.g. "PITHHB-84F703A1B2C3".
+/// Stable device serial, e.g. "PITHPEDAL-84F703A1B2C3".
 pub fn serial() -> &'static str {
     SERIAL
         .get_or_init(|| {
             let mut mac = [0u8; 6];
             unsafe { sys::esp_efuse_mac_get_default(mac.as_mut_ptr()) };
             format!(
-                "PITHHB-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
+                "PITHPEDAL-{:02X}{:02X}{:02X}{:02X}{:02X}{:02X}",
                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
             )
         })
         .as_str()
-}
-
-/// Board name reported in `@CAP`, selected by the `esp32s2`/`esp32s3` Cargo
-/// feature (see firmware/handbrake/Cargo.toml — the chip itself is chosen by
-/// --target/MCU, this only labels which one). "esp32s3_devkit" is
-/// provisional pending the actual S3 board being finalized.
-pub fn board() -> &'static str {
-    if cfg!(feature = "esp32s3") {
-        "esp32s3_devkit"
-    } else {
-        "lolin_s2_mini"
-    }
 }

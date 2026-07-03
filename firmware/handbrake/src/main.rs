@@ -1,4 +1,8 @@
-// pith-hb — ESP32-S2 (Lolin S2 Mini) single-axis USB handbrake firmware.
+// pith-hb — single-axis USB handbrake firmware. Builds for ESP32-S2 (Lolin
+// S2 Mini, the shipped/default hardware) or ESP32-S3 (see justfile's
+// build-s3/flash-s3/image-s3 — a different Xtensa target, selected via
+// --target/MCU env overrides + the `esp32s3` Cargo feature); the Rust logic
+// is identical on both, only the `board` label in @CAP differs (device.rs).
 //
 // HX711 load cell -> integer smoothing -> calibration (idle/max/deadzone,
 // persisted in NVS) -> a single 16-bit HID axis (report id 1) — a plain USB
