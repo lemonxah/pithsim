@@ -35,15 +35,9 @@ pub const ADC_MISO: i32 = 18; // DOUT
 pub const ADC_MOSI: i32 = 17; // DIN
 pub const ADC_CS: i32 = 7;
 
-/// Actuator control (CONFIRMED path, see docs/pedals.md §0): a JSSmotor
-/// JSS57P2N closed-loop stepper, driven by step/dir pulses on these pins —
-/// not the iSV57T servo this board ships with by default in the reference
-/// project. The JSS57P2N supports step/dir natively (up to 200kHz), so this
-/// needs no new wiring. It also exposes Modbus RTU over RS232 (position
-/// deviation/current telemetry) but that path is NOT used here — its
-/// register map wasn't available from public sources when this was
-/// written, and step/dir avoids needing it reverse-engineered before
-/// Phase 2 can start.
+/// Step/dir pins for a stepper actuator — NOT the chosen path (see
+/// `ISV57_TX`/`ISV57_RX` below), kept here as-is from the reference
+/// project's own pin table in case a future build wants pulse control.
 pub const STEPPER_DIR: i32 = 37;
 pub const STEPPER_STEP: i32 = 38;
 
@@ -57,10 +51,19 @@ pub const PEDAL_ASSIGN_CFG2: i32 = 2;
 
 pub const BUZZER: i32 = 21;
 
-/// UART to the board's RS232 interface chip — wired for the iSV57T in the
-/// reference project. Unused by this build (JSS57P2N over step/dir instead;
-/// see `STEPPER_DIR`/`STEPPER_STEP`), kept here since the pins/chip are
-/// still physically on the board.
+/// Actuator link (CONFIRMED path, see docs/pedals.md §0): UART to the
+/// board's RS232 interface chip, wired identically to how the reference
+/// project drives its default iSV57T servo — Modbus RTU on `Serial2`,
+/// 38400 8N1 per `isv57communication.cpp` (that baud/framing is the
+/// iSV57T's, used here only as a starting-point reference, NOT confirmed
+/// for the JSS57P2N). This build's actuator is a JSSmotor JSS57P2N closed-
+/// loop stepper, not an iSV57T — its Modbus register map (target position/
+/// velocity, enable, alarm status, etc.) is model-specific and was NOT
+/// obtainable from public sources when this was written (StepperOnline,
+/// JSSmotor, ThinkRobotics, Scribd, AliExpress, a Duet3D thread all 403'd
+/// or had nothing usable). DO NOT write register-level driver code against
+/// these pins until the real JSS57P2N manual is in hand — get it from the
+/// user first.
 pub const ISV57_TX: i32 = 10;
 pub const ISV57_RX: i32 = 9;
 

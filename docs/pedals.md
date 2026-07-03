@@ -34,20 +34,25 @@ v1 design). Confirmed from that repo:
 - **Actuator**: **not the iSV57T** (the reference project's default for this
   board) — this build uses a **JSSmotor JSS57P2N** (NEMA23 closed-loop
   stepper / "hybrid servo", 32-bit DSP, closed-loop by default, up to
-  200kHz step rate, 24-48V, 4.2A). Decided control path: **step/dir pulses**
-  on the board's existing `STEPPER_DIR`/`STEPPER_STEP` pins (GPIO37/38,
-  already in `board.rs`) — the JSS57P2N supports this natively, so it needs
-  no new wiring and follows the reference project's *other* actuator
-  architecture (`StepperWithLimits.cpp` on `ChrGri/FastNonAccelStepper`)
-  rather than the from-scratch Modbus RTU driver `isv57communication.cpp`
-  had to write for the iSV57. The JSS57P2N *also* exposes Modbus RTU over
-  RS232 (richer telemetry — position deviation, bus voltage, current) but
-  its exact register map wasn't available from public sources at the time
-  of writing (datasheet PDFs 403'd); step/dir was chosen specifically to
-  avoid needing that reverse-engineered before Phase 2 can start. The
-  board's `ISV57_TX`/`ISV57_RX` RS232 pins (wired for the iSV57 in the
-  reference) go unused by this choice — the RS232 chip is still physically
-  on the board, just not part of this actuator's control path.
+  200kHz step rate, 24-48V, 4.2A). It supports both step/dir pulses and
+  Modbus RTU over RS232; **decided control path: RS232 + Modbus RTU**,
+  wired exactly like the reference project wires its default iSV57T — same
+  UART pins (`ISV57_TX`/`ISV57_RX`, GPIO10/9) and the same board RS232
+  interface chip, both already on this PCB and already in `board.rs`. This
+  was revised from an earlier step/dir decision once the user confirmed
+  they want the RS232 path to match the iSV57T's wiring pattern.
+  **Blocked**: the JSS57P2N's actual Modbus register map (which address
+  holds target position/velocity, enable, alarm status, etc.) is NOT the
+  same as the iSV57T's (`isv57communication.cpp`'s registers are specific
+  to that servo) and wasn't obtainable from any public source tried
+  (StepperOnline, JSSmotor, ThinkRobotics, Scribd, AliExpress, a Duet3D
+  forum thread — all 403'd or had no usable content). Confirmed from
+  `isv57communication.cpp` as a *reference point only* (not applicable to
+  the JSS57P2N): the iSV57T's link runs Modbus RTU on `Serial2` at 38400
+  8N1. **Do not write JSS57P2N register-level driver code until the real
+  manual/register table is in hand** — sending a wrong register write to a
+  live motor controller is exactly the kind of mistake this phased plan
+  exists to avoid. Get the manual from the user before starting that work.
 - **Pin map**: reproduced verbatim from the `PCB_VERSION == 9` block into
   `firmware/pedals/src/board.rs`, including two pin-reuse cases
   (GPIO4: MCP4725 DAC I2C SCL *and* brake-resistor control; GPIO6: ADC RST

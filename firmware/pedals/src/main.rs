@@ -1,7 +1,9 @@
 // pith-pedals — ESP32-S3 active pedal firmware. Target hardware confirmed:
 // gilphilbert's "PCBA V2" control board, v2.2 Rev B (ESP32-S3FH4R2, ADS1256
-// loadcell ADC, iSV57T servo over RS232) — see docs/pedals.md §0 and
-// board.rs for the sourced pin map.
+// loadcell ADC, a JSSmotor JSS57P2N closed-loop stepper over RS232 — NOT
+// the board's default iSV57T, wired identically though) — see
+// docs/pedals.md §0 and board.rs for the sourced pin map + what's still
+// blocked (the JSS57P2N's Modbus register map).
 //
 // Phase 1 (this crate, see docs/pedals.md): USB HID joystick axis (report 1)
 // + a JSON config/action/state command channel (report 2, `@CFG`/`@GETCFG`/
@@ -9,8 +11,8 @@
 // dual-slot `@OTA` update mechanism as the DDU/handbrake. No loadcell or
 // servo driver yet — `runtime::Runtime::sample` is an explicit placeholder,
 // and `board.rs`'s pin constants are not wired to anything. Phase 2
-// (bench-validated, not here) ports the reference project's admittance
-// force controller and the ADS1256/iSV57T drivers.
+// (bench-validated, not here) ports the ADS1256 driver and writes a new
+// JSS57P2N Modbus driver once its register map is available.
 
 mod board;
 mod device;
