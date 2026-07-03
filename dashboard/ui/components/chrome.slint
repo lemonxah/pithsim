@@ -164,9 +164,7 @@ component NavRow inherits Rectangle {
 }
 
 // One connected-gear status card (bottom of the sidebar, one per device).
-// Also reused on the Overview page's "Connected devices" row so every Pith
-// device shows up there too, not just the DDU.
-export component GearCard inherits Rectangle {
+component GearCard inherits Rectangle {
     in property <string> name;
     in property <bool> connected: false;
     in property <string> detail: "";
