@@ -130,6 +130,11 @@ pub fn poll_hid(rt: &mut Runtime) {
 }
 
 fn feed(bytes: &[u8], rt: &mut Runtime) {
+    // Mid-OTA the channel carries the raw image, not text — hand every byte
+    // to the OTA writer and skip line accumulation.
+    if crate::ota::feed(bytes) {
+        return;
+    }
     let mut lines: Vec<String> = Vec::new();
     for &c in bytes {
         if c == b'\n' || c == b'\r' {
@@ -146,6 +151,13 @@ fn feed(bytes: &[u8], rt: &mut Runtime) {
         }
     }
     for line in lines {
+        // @OTA replies out-of-band (OTAREADY / K / OTADONE / OTAERR) and
+        // flips the channel into raw-byte mode, so it never goes through the
+        // normal command -> single-reply path.
+        if let Some(rest) = line.strip_prefix("@OTA") {
+            crate::ota::begin(rest.trim().parse().unwrap_or(0));
+            continue;
+        }
         let reply = dispatch(&line, rt);
         write_line(&reply);
     }
@@ -223,7 +235,7 @@ fn status_line(rt: &Runtime) -> String {
 
 // ---- report-id-2 TX (replies + telemetry share one FIFO byte stream) ----
 
-fn write_line(s: &str) {
+pub fn write_line(s: &str) {
     {
         let mut tx = HID_TX.lock().unwrap();
         // Compact already-sent bytes so `buf` doesn't creep upward over time.

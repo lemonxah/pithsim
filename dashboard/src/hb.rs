@@ -50,6 +50,9 @@ pub enum HbOutbound {
     Save,
     Cancel,
     Reset,
+    /// Stream this downloaded app image to the device over @OTA. Runs on the
+    /// device thread because it needs exclusive use of the HID handle.
+    OtaFile(std::path::PathBuf),
 }
 
 pub fn wire_hb_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
@@ -100,6 +103,11 @@ pub fn wire_hb_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
         move || flash_hb_latest(&c)
     });
 
+    hb.on_install_update_requested({
+        let c = ctx.clone();
+        move || install_hb_update(&c)
+    });
+
     hb.set_device_found(device_present(PITH_VID, PID_HANDBRAKE));
 }
 
@@ -129,6 +137,80 @@ pub fn recompute_hb_update(ui: &AppWindow, s: &crate::state::State) {
     }
 }
 
+/// Newest release carrying handbrake firmware, split by asset kind: the app
+/// image (`pith-hb-<board>.bin`, streamed over @OTA) and the full merged
+/// image (`pith-hb-<board>-full.bin`, written at 0x0 over the ROM bootloader
+/// for recovery / one-time migration from the pre-OTA partition layout).
+fn latest_hb_assets(s: &crate::state::State) -> Option<(String, Option<String>, Option<String>)> {
+    let rel = s.releases.iter().find(|r| !r.hb_bin.is_empty())?;
+    let app = rel
+        .hb_bin
+        .iter()
+        .find(|(b, _)| !b.ends_with("-full"))
+        .map(|(_, u)| u.clone());
+    let full = rel
+        .hb_bin
+        .iter()
+        .find(|(b, _)| b.ends_with("-full"))
+        .map(|(_, u)| u.clone());
+    Some((rel.tag.clone(), app, full))
+}
+
+/// In-place update over USB HID: download the newest app image, then hand it
+/// to the device thread to stream over @OTA. No bootloader dance — the device
+/// flips slots and reboots itself; the connect loop picks it back up.
+fn install_hb_update(ctx: &Arc<Ctx>) {
+    let ui = match ctx.ui.upgrade() {
+        Some(u) => u,
+        None => return,
+    };
+    let hb = ui.global::<Hb>();
+    if hb.get_flashing() {
+        return;
+    }
+    if !hb.get_connected() {
+        hb.set_flash_status(sstr("Handbrake not connected"));
+        return;
+    }
+    let (tag, url) = {
+        let s = ctx.lock();
+        match latest_hb_assets(&s).and_then(|(tag, app, _)| app.map(|u| (tag, u))) {
+            Some(x) => x,
+            None => {
+                hb.set_flash_status(sstr("No published handbrake firmware found"));
+                return;
+            }
+        }
+    };
+    hb.set_flashing(true);
+    hb.set_flash_progress(0.0);
+    hb.set_flash_status(sstr(&format!("Downloading {tag}…")));
+
+    let ctx = ctx.clone();
+    ctx.clone().spawn(async move {
+        let out = cache_dir().join(format!("pith-hb-{tag}.bin"));
+        let pc = ctx.clone();
+        let ok = http_download_file(&url, &out, move |frac| {
+            // download is the first quarter of the bar; the @OTA stream is the rest
+            pc.ui_run(move |u| u.global::<Hb>().set_flash_progress(frac as f32 * 0.25));
+        })
+        .await;
+        if !ok || !out.exists() {
+            ctx.ui_run(|u| {
+                let hb = u.global::<Hb>();
+                hb.set_flashing(false);
+                hb.set_flash_status(sstr("Download failed"));
+            });
+            return;
+        }
+        ctx.ui_run(|u| {
+            u.global::<Hb>()
+                .set_flash_status(sstr("Updating over USB…"));
+        });
+        ctx.send_hb(HbOutbound::OtaFile(out));
+    });
+}
+
 /// The serial device path of a handbrake sitting in ROM download mode, if one
 /// is plugged in right now.
 fn hb_bootloader_port() -> Option<String> {
@@ -151,14 +233,17 @@ fn flash_hb_latest(ctx: &Arc<Ctx>) {
     if hb.get_flashing() {
         return;
     }
-    let (tag, url) = {
+    // Prefer the full merged image at 0x0 (bootloader + partition table +
+    // app) — it recovers any device and performs the one-time migration to
+    // the OTA partition layout. Releases predating it only ship the app
+    // image, which matches the OLD single-factory table at 0x10000.
+    let (tag, url, offset) = {
         let s = ctx.lock();
-        match s
-            .releases
-            .iter()
-            .find(|r| !r.hb_bin.is_empty())
-            .and_then(|r| r.hb_bin.values().next().map(|u| (r.tag.clone(), u.clone())))
-        {
+        match latest_hb_assets(&s).and_then(|(tag, app, full)| match (full, app) {
+            (Some(u), _) => Some((tag, u, "0x0")),
+            (None, Some(u)) => Some((tag, u, "0x10000")),
+            (None, None) => None,
+        }) {
             Some(x) => x,
             None => {
                 hb.set_flash_status(sstr("No published handbrake firmware found"));
@@ -179,7 +264,7 @@ fn flash_hb_latest(ctx: &Arc<Ctx>) {
 
     let ctx = ctx.clone();
     ctx.clone().spawn(async move {
-        let out = cache_dir().join(format!("pith-hb-{tag}.bin"));
+        let out = cache_dir().join(format!("pith-hb-{tag}-{offset}.bin"));
         let pc = ctx.clone();
         let ok = http_download_file(&url, &out, move |frac| {
             // download is the first half of the progress bar
@@ -199,16 +284,8 @@ fn flash_hb_latest(ctx: &Arc<Ctx>) {
             hb.set_flash_progress(0.5);
             hb.set_flash_status(sstr("Flashing over the ROM bootloader…"));
         });
-        // The app lives in the single `factory` partition at 0x10000 (no OTA
-        // slots) — writing the app image there is the whole update.
         let output = tokio::process::Command::new("espflash")
-            .args([
-                "write-bin",
-                "0x10000",
-                &out.to_string_lossy(),
-                "--port",
-                &port,
-            ])
+            .args(["write-bin", offset, &out.to_string_lossy(), "--port", &port])
             .stdin(std::process::Stdio::null())
             .output()
             .await;
@@ -494,7 +571,50 @@ fn handle_command(ctx: &Arc<Ctx>, dev: &mut Handbrake, auto_cal: &mut AutoCal, c
             }
             set_page(ctx, HbPage::AutoCalibrate);
         }
+        HbOutbound::OtaFile(path) => {
+            let img = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    finish_flash(ctx, Err(format!("read image: {e}")));
+                    return;
+                }
+            };
+            let pc = ctx.clone();
+            let r = dev.ota_upload(&img, move |pct| {
+                // the @OTA stream is the remaining 3/4 of the progress bar
+                let frac = 0.25 + (pct as f32 / 100.0) * 0.75;
+                pc.ui_run(move |u| u.global::<Hb>().set_flash_progress(frac));
+            });
+            if r.is_ok() {
+                // The device flips slots and reboots: drop our side so the
+                // presence scan reconnects to the new firmware cleanly.
+                dev.close();
+                auto_cal.active = false;
+                ctx.ui_run(|u| {
+                    let hb = u.global::<Hb>();
+                    hb.set_connected(false);
+                    hb.set_conn_detail(sstr("Rebooting into the new firmware…"));
+                    hb.set_page(HbPage::Connect);
+                });
+            }
+            finish_flash(ctx, r);
+        }
     }
+}
+
+/// Common tail of an @OTA attempt: clear the flashing state + surface result.
+fn finish_flash(ctx: &Arc<Ctx>, r: Result<(), String>) {
+    let msg = match &r {
+        Ok(()) => "Update installed — device is rebooting".to_string(),
+        Err(e) => format!("Update failed: {e}"),
+    };
+    let ok = r.is_ok();
+    ctx.ui_run(move |u| {
+        let hb = u.global::<Hb>();
+        hb.set_flashing(false);
+        hb.set_flash_progress(if ok { 1.0 } else { 0.0 });
+        hb.set_flash_status(sstr(&msg));
+    });
 }
 
 fn on_telem(ctx: &Arc<Ctx>, dev: &mut Handbrake, auto_cal: &mut AutoCal, t: proto::Telem) {

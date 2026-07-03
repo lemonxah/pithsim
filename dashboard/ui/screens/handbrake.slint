@@ -314,24 +314,27 @@ component MonitorView inherits Rectangle {
         if !Hb.calibrated: Text { text: "Not calibrated yet."; color: Theme.amber; font-size: 13px; }
 
         // Firmware status: the handbrake's image ships in the same GitHub
-        // release as the DDU's. No OTA on this device — updating means
-        // rebooting it into the ROM bootloader, which drops the HID link and
-        // lands the user on the connect screen where the flash card lives.
+        // release as the DDU's, and installs in place over USB HID (@OTA) —
+        // the device flips app slots and reboots itself. The ROM-bootloader
+        // flash card on the connect screen remains as the recovery path.
         Card {
             VerticalLayout {
                 padding: 20px;
-                spacing: 6px;
+                spacing: 10px;
                 SectionLabel { text: "FIRMWARE"; }
                 HorizontalLayout {
                     spacing: 8px;
                     Text { text: "installed v\{Hb.fw-version}" + (Hb.fw-latest != "" ? "   latest \{Hb.fw-latest}" : ""); color: Theme.text2; font-family: Theme.mono-font; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
                     if Hb.update-available: Text { text: "UPDATE AVAILABLE"; color: Theme.amber; font-family: Theme.display-font; font-size: 11px; font-weight: 700; letter-spacing: 1px; vertical-alignment: center; }
                 }
-                if Hb.update-available: Text {
-                    text: "To update: hold BOOT, tap RESET — the flash button appears once the bootloader is detected.";
-                    color: Theme.text3;
-                    font-size: 12px;
-                    wrap: word-wrap;
+                if Hb.flashing: LiveBar { value: Hb.flash-progress; label: Hb.flash-status; }
+                if !Hb.flashing && Hb.flash-status != "": Text { text: Hb.flash-status; color: Theme.text2; font-family: Theme.mono-font; font-size: 11px; wrap: word-wrap; }
+                if Hb.update-available && !Hb.flashing: HorizontalLayout {
+                    Rectangle { }
+                    PrimaryButton {
+                        text: "INSTALL " + Hb.fw-latest;
+                        clicked => { Hb.install-update-requested(); }
+                    }
                 }
             }
         }

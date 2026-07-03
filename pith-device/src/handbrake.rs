@@ -167,3 +167,66 @@ impl Handbrake {
         proto::parse_telem_line(&line)
     }
 }
+
+impl Handbrake {
+    /// Stream a new app image over the `@OTA` protocol (same dialect as the
+    /// DDU): `@OTA<size>` -> OTAREADY, then raw bytes ACK'd per 2048 with "K",
+    /// OTADONE + device reboot on success. The device stops its telemetry
+    /// stream during the transfer; any stale line is skipped while waiting.
+    pub fn ota_upload(
+        &mut self,
+        img: &[u8],
+        mut on_progress: impl FnMut(i32),
+    ) -> Result<(), String> {
+        if !self.hid.write_str(&format!("@OTA{}\n", img.len())) {
+            return Err("write failed".to_string());
+        }
+        // esp_ota_begin erases the target slot first — allow a generous window.
+        self.ota_wait("OTAREADY", 12000)?;
+        const ACK: usize = 2048;
+        let mut sent = 0usize;
+        while sent < img.len() {
+            let end = std::cmp::min(sent + ACK, img.len());
+            if !self.hid.write(&img[sent..end]) {
+                return Err(format!("write error at {sent}"));
+            }
+            sent = end;
+            if sent < img.len() {
+                self.ota_wait("K", 6000)
+                    .map_err(|e| format!("no ack at {sent}: {e}"))?;
+            }
+            on_progress((sent * 100 / img.len()) as i32);
+        }
+        // Device sends OTADONE then reboots — a missing reply (already
+        // rebooting) is fine; only an explicit OTAERR is a failure.
+        match self.ota_wait("OTADONE", 8000) {
+            Ok(()) => Ok(()),
+            Err(e) if e.contains("OTAERR") => Err(e),
+            Err(_) => Ok(()), // timed out: device already rebooting
+        }
+    }
+
+    /// Wait for an OTA reply containing `needle`, skipping unrelated telemetry
+    /// or status lines that share the channel.
+    fn ota_wait(&mut self, needle: &str, ms: u64) -> Result<(), String> {
+        let t0 = Instant::now();
+        loop {
+            let elapsed = t0.elapsed().as_millis() as u64;
+            if elapsed >= ms {
+                return Err(format!("timed out waiting for {needle}"));
+            }
+            let line = self.hid.read_line((ms - elapsed).clamp(1, 2000));
+            let t = line.trim();
+            if t.is_empty() {
+                continue;
+            }
+            if t.contains("OTAERR") {
+                return Err("device error: OTAERR".to_string());
+            }
+            if t == needle || (needle.len() > 2 && t.contains(needle)) {
+                return Ok(());
+            }
+            // else: stale/interleaved line — skip and keep waiting.
+        }
+    }
+}

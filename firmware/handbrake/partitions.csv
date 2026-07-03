@@ -1,6 +1,14 @@
-# pith-hb partition table — 4 MB flash, single factory app (no OTA slots).
+# pith-hb partition table — 4 MB flash, dual OTA app slots (A/B + rollback).
+#
+# The dashboard updates the handbrake in place over the HID command channel
+# (@OTA protocol, same dialect as the DDU): the new image streams into the
+# inactive slot, the bootloader flips to it, and a failed boot rolls back.
+# Migrating a device from the old single-factory layout needs ONE full USB
+# flash (ROM download mode) of the merged image; OTA works from then on.
 #
 # Name,     Type, SubType,  Offset,    Size
 nvs,        data, nvs,      0x9000,    0x6000,
-phy_init,   data, phy,      0xf000,    0x1000,
-factory,    app,  factory,  0x10000,   0x300000,
+otadata,    data, ota,      0xf000,    0x2000,
+phy_init,   data, phy,      0x11000,   0x1000,
+ota_0,      app,  ota_0,    0x20000,   0x1F0000,
+ota_1,      app,  ota_1,    0x210000,  0x1F0000,

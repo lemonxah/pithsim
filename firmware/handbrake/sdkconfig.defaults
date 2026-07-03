@@ -6,9 +6,10 @@
 # USB-UART adapter to UART0 to see logs.
 CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 
-# 4 MB flash (Lolin S2 Mini) with a small custom partition table: nvs + a
-# single factory app partition. No OTA slots — flashing is manual via
-# espflash in ROM download mode (hold BOOT, tap RESET).
+# 4 MB flash (Lolin S2 Mini) with a custom partition table: nvs + dual OTA
+# app slots. The dashboard updates the device in place over HID (@OTA);
+# espflash in ROM download mode (hold BOOT, tap RESET) is the recovery path
+# and the one-time migration from the old single-factory layout.
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
 CONFIG_PARTITION_TABLE_CUSTOM=y
@@ -17,3 +18,7 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # Compile the ESP-IDF C side (FreeRTOS, drivers, TinyUSB) for speed — the USB
 # device task and GPIO bit-banging for the HX711 live there.
 CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# A failed boot after an OTA rolls back to the previous slot; the running
+# image confirms itself via esp_ota_mark_app_valid_cancel_rollback().
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

@@ -4,13 +4,15 @@
 // persisted in NVS) -> a single 16-bit HID axis (report id 1) — a plain USB
 // joystick, no COM port. The calibration wizard's protocol (`@`-commands)
 // and a continuous `$raw,pct` telemetry stream ride a second HID report
-// (id 2, vendor channel) instead. No display/LEDs/OTA — see pithddu for that
-// end of things.
+// (id 2, vendor channel) instead. Firmware updates arrive over that same
+// channel (@OTA, dual app slots + rollback). No display/LEDs — see the DDU
+// for that end of things.
 
 mod autozero;
 mod cal;
 mod device;
 mod hx711;
+mod ota;
 mod usb;
 
 use std::time::Duration;
@@ -29,6 +31,10 @@ fn main() {
     log::info!("pith-hb boot — serial {serial}");
 
     usb::init(serial);
+
+    // Confirm this image so the OTA rollback watchdog doesn't revert it on
+    // the next reset (no-op when the running slot isn't pending-verify).
+    ota::mark_valid();
 
     let peripherals = Peripherals::take().expect("peripherals already taken");
     let mut cell = Hx711::new(peripherals.pins.gpio1, peripherals.pins.gpio2)
@@ -52,11 +58,22 @@ fn main() {
     loop {
         usb::poll_hid(&mut rt);
 
+        if ota::should_reboot() {
+            // Give the queued OTADONE reply time to flush over HID first.
+            std::thread::sleep(Duration::from_millis(300));
+            log::info!("OTA complete — rebooting into the new image");
+            unsafe { esp_idf_svc::sys::esp_restart() };
+        }
+        ota::check_timeout();
+
         if let Some(sample) = cell.try_read() {
             rt.raw = filter.push(sample);
             auto_zero.observe(rt.raw, &mut rt.pending);
             usb::push_axis(rt.output());
-            usb::push_telem(&rt);
+            // Keep the channel clean (and the CPU on flash writes) mid-OTA.
+            if !ota::ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+                usb::push_telem(&rt);
+            }
         }
 
         std::thread::sleep(Duration::from_millis(2));

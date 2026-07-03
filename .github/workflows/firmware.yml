@@ -65,15 +65,23 @@ jobs:
       - name: Build (release)
         run: cargo build --release
 
-      - name: Save app image
+      # Two assets: the bare app image (streamed over @OTA by the dashboard)
+      # and the full merged image (bootloader + partition table + app, written
+      # at 0x0 over the ROM bootloader — recovery + one-time migration from
+      # the pre-OTA single-factory layout).
+      - name: Save app + full images
         run: |
           espflash save-image --chip esp32s2 \
             target/xtensa-esp32s2-espidf/release/pith-hb pith-hb-lolin_s2_mini.bin
+          espflash save-image --chip esp32s2 --merge --partition-table partitions.csv \
+            target/xtensa-esp32s2-espidf/release/pith-hb pith-hb-lolin_s2_mini-full.bin
 
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-hb-lolin_s2_mini
-          path: firmware/handbrake/pith-hb-lolin_s2_mini.bin
+          path: |
+            firmware/handbrake/pith-hb-lolin_s2_mini.bin
+            firmware/handbrake/pith-hb-lolin_s2_mini-full.bin
           if-no-files-found: error
 
   # The factory recovery app (BIOS/rescue console). Built on every push so a

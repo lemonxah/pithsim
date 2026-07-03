@@ -570,4 +570,6 @@ export global Hb {
     callback cancel-requested();
     callback reset-requested();
     callback flash-latest-requested();
+    // In-place update over USB HID (@OTA) — no bootloader dance needed.
+    callback install-update-requested();
 }
