@@ -1,6 +1,6 @@
 [package]
 name = "pith-dashboard"
-version = "0.7.12"
+version = "0.7.13"
 edition = "2021"
 description = "SimHub companion app for the Pith DDU sim-racing dash"
 license = "BSD-3-Clause"
