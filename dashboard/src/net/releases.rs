@@ -42,21 +42,28 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
     let ctx = ctx.clone();
     ctx.clone().spawn(async move {
         let (body, code) = http_get(FIRMWARE_RELEASES_URL).await;
+        // Every device's firmware versions independently on its own release
+        // stream, told apart by tag prefix: firmware-vX.Y.Z is the DDU,
+        // handbrake-vX.Y.Z the handbrake. The prefix is stripped so the
+        // version reads + compares like the device's `X.Y.Z` from @CAP.
         let mut rels: Vec<FwRelease> = Vec::new();
+        let mut hb_rels: Vec<FwRelease> = Vec::new();
         if let Ok(j) = serde_json::from_str::<Value>(&body) {
             if let Some(arr) = j.as_array() {
                 for r in arr {
                     if r.get("draft").and_then(|x| x.as_bool()).unwrap_or(false) {
                         continue;
                     }
-                    // Monorepo tags are `firmware-vX.Y.Z`; strip the stream prefix so
-                    // the version reads + compares like the device's `X.Y.Z`.
                     let raw_tag = r.get("tag_name").and_then(|x| x.as_str()).unwrap_or("");
+                    let (is_hb, tag) = if let Some(t) = raw_tag.strip_prefix("handbrake-") {
+                        (true, t)
+                    } else if let Some(t) = raw_tag.strip_prefix("firmware-") {
+                        (false, t)
+                    } else {
+                        continue; // dashboard-v* etc.
+                    };
                     let mut fr = FwRelease {
-                        tag: raw_tag
-                            .strip_prefix("firmware-")
-                            .unwrap_or(raw_tag)
-                            .to_string(),
+                        tag: tag.to_string(),
                         board_bin: Default::default(),
                         hb_bin: Default::default(),
                     };
@@ -71,15 +78,14 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                                 .and_then(|x| x.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            // One release carries every device's firmware, told
-                            // apart by asset prefix: pithddu-<board>.bin (DDU),
-                            // pith-hb-<board>.bin (handbrake).
-                            if let Some(board) = name
-                                .strip_prefix("pith-hb-")
-                                .and_then(|b| b.strip_suffix(".bin"))
-                            {
-                                if !board.is_empty() {
-                                    fr.hb_bin.insert(board.to_string(), url);
+                            if is_hb {
+                                if let Some(board) = name
+                                    .strip_prefix("pith-hb-")
+                                    .and_then(|b| b.strip_suffix(".bin"))
+                                {
+                                    if !board.is_empty() {
+                                        fr.hb_bin.insert(board.to_string(), url);
+                                    }
                                 }
                             } else if let Some(board) = name
                                 .strip_prefix("pithddu-")
@@ -91,7 +97,12 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                             }
                         }
                     }
-                    if !fr.tag.is_empty() && (!fr.board_bin.is_empty() || !fr.hb_bin.is_empty()) {
+                    if fr.tag.is_empty() {
+                        continue;
+                    }
+                    if is_hb && !fr.hb_bin.is_empty() {
+                        hb_rels.push(fr);
+                    } else if !is_hb && !fr.board_bin.is_empty() {
                         rels.push(fr);
                     }
                 }
@@ -102,6 +113,9 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
             let mut s = ctx2.lock();
             s.releases = rels;
             s.releases
+                .sort_by(|a, b| semver_cmp(&b.tag, &a.tag).cmp(&0));
+            s.hb_releases = hb_rels;
+            s.hb_releases
                 .sort_by(|a, b| semver_cmp(&b.tag, &a.tag).cmp(&0));
             let fw = u.global::<Firmware>();
             let labels: Vec<slint::SharedString> = s

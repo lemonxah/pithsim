@@ -1,3 +1,5 @@
+# DDU firmware (+ its factory recovery app). The handbrake versions and
+# releases independently — see handbrake.yml.
 name: firmware
 
 on:
@@ -41,49 +43,6 @@ jobs:
           path: firmware/ddu/pithddu-xiao_s3.bin
           if-no-files-found: error
 
-  # The handbrake firmware (ESP32-S2 / Lolin S2 Mini). Published in the SAME
-  # firmware-v* release as the DDU image, under its own asset name, so the
-  # dashboard can update every connected device from one release.
-  handbrake:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: firmware/handbrake
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install the esp Rust toolchain
-        uses: esp-rs/xtensa-toolchain@v1.5
-        with:
-          default: true
-          buildtargets: esp32s2
-          ldproxy: true
-
-      - name: Install espflash
-        run: cargo install espflash --locked
-
-      - name: Build (release)
-        run: cargo build --release
-
-      # Two assets: the bare app image (streamed over @OTA by the dashboard)
-      # and the full merged image (bootloader + partition table + app, written
-      # at 0x0 over the ROM bootloader — recovery + one-time migration from
-      # the pre-OTA single-factory layout).
-      - name: Save app + full images
-        run: |
-          espflash save-image --chip esp32s2 \
-            target/xtensa-esp32s2-espidf/release/pith-hb pith-hb-lolin_s2_mini.bin
-          espflash save-image --chip esp32s2 --merge --partition-table partitions.csv \
-            target/xtensa-esp32s2-espidf/release/pith-hb pith-hb-lolin_s2_mini-full.bin
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: firmware-hb-lolin_s2_mini
-          path: |
-            firmware/handbrake/pith-hb-lolin_s2_mini.bin
-            firmware/handbrake/pith-hb-lolin_s2_mini-full.bin
-          if-no-files-found: error
-
   # The factory recovery app (BIOS/rescue console). Built on every push so a
   # change that breaks it is caught in CI, not at the next full device flash.
   recovery:
@@ -114,7 +73,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [firmware, handbrake, recovery]
+    needs: [firmware, recovery]
     if: startsWith(github.ref, 'refs/tags/firmware-v')
     runs-on: ubuntu-latest
     permissions:

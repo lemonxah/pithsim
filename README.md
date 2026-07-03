@@ -59,12 +59,13 @@ sudo cp 99-pith.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
 
 Plug in any Pith device and launch `pith-dashboard` — every connected device
 shows up as a status card at the bottom of the sidebar, and each gets its own
-page. **Firmware updates for all devices come from one `firmware-v*` release,
-and every device updates in place over USB (@OTA)**: the DDU from its Firmware
-page, the handbrake from its page's INSTALL button — no buttons to hold, the
-device flips app slots and reboots itself (a failed boot rolls back). The ROM
-bootloader (hold BOOT, tap RESET) remains as the recovery path, and does the
-one-time migration for handbrakes flashed before OTA existed.
+page. **Every device updates in place over USB (@OTA) from its own release
+stream** — `firmware-v*` for the DDU, `handbrake-v*` for the handbrake, each
+independently versioned: the DDU from its Firmware page, the handbrake from
+its page's INSTALL button — no buttons to hold, the device flips app slots
+and reboots itself (a failed boot rolls back). The ROM bootloader (hold BOOT,
+tap RESET) remains as the recovery path, and does the one-time migration for
+handbrakes flashed before OTA existed.
 
 ## Screenshots
 

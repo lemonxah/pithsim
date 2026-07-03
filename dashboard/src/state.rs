@@ -262,7 +262,8 @@ pub struct State {
     pub device_fw: String,
     pub hb_fw: String, // handbrake firmware version (from its @CAP), for update checks
     pub serial_ports: Vec<crate::device::PortInfo>,
-    pub releases: Vec<FwRelease>,
+    pub releases: Vec<FwRelease>,    // DDU stream (firmware-v* tags)
+    pub hb_releases: Vec<FwRelease>, // handbrake stream (handbrake-v* tags)
 
     pub device_log: Vec<String>, // firmware logs streamed over HID report id 3
 
@@ -365,6 +366,7 @@ impl Default for State {
             hb_fw: String::new(),
             serial_ports: Vec::new(),
             releases: Vec::new(),
+            hb_releases: Vec::new(),
             device_log: Vec::new(),
             udp_port: 28909,
             acc_enabled: false,

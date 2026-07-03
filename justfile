@@ -85,14 +85,14 @@ version:
     echo "latest tags:"
     git tag -l --sort=-v:refname 2>/dev/null | head -5 | sed 's/^/  /' || true
 
-# Cut a release for ONE stream: bump the stream's Cargo.toml version(s), commit,
+# Cut a release for ONE stream: bump the stream's Cargo.toml version, commit,
 # tag, and push (CI builds the bins from the tag and publishes the GitHub
-# Release). The tag prefix + the crate versions stay in sync. The `firmware`
-# stream covers EVERY device firmware (DDU + handbrake share one version), so a
-# single firmware-v* release carries an asset per device (pithddu-*.bin,
-# pith-hb-*.bin) and the dashboard can update all connected hardware from it.
+# Release). The tag prefix + the crate version stay in sync. Every device's
+# firmware versions independently on its own stream/tag; the dashboard looks
+# each device's updates up by tag prefix (firmware-v* = DDU, handbrake-v*).
 #   just release dashboard          -> bump patch of the latest dashboard-v* tag
-#   just release firmware           -> bump patch of the latest firmware-v* tag
+#   just release firmware           -> bump patch of the latest firmware-v* tag (DDU)
+#   just release handbrake          -> bump patch of the latest handbrake-v* tag
 #   just release dashboard 1.2.3    -> release that stream exactly at 1.2.3
 release stream version="":
     #!/usr/bin/env bash
@@ -100,8 +100,9 @@ release stream version="":
     stream="{{stream}}"
     case "$stream" in
         dashboard) manifests=(dashboard/Cargo.toml) ;;
-        firmware)  manifests=(firmware/ddu/Cargo.toml firmware/handbrake/Cargo.toml) ;;
-        *) echo "usage: just release <dashboard|firmware> [version]" >&2; exit 1 ;;
+        firmware)  manifests=(firmware/ddu/Cargo.toml) ;;
+        handbrake) manifests=(firmware/handbrake/Cargo.toml) ;;
+        *) echo "usage: just release <dashboard|firmware|handbrake> [version]" >&2; exit 1 ;;
     esac
     git fetch --tags --quiet
     ver="{{version}}"

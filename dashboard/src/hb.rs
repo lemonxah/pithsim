@@ -116,11 +116,7 @@ pub fn wire_hb_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
 /// version last reported by the connected handbrake's @CAP.
 pub fn recompute_hb_update(ui: &AppWindow, s: &crate::state::State) {
     let hb = ui.global::<Hb>();
-    let latest = s
-        .releases
-        .iter()
-        .find(|r| !r.hb_bin.is_empty())
-        .map(|r| r.tag.clone());
+    let latest = s.hb_releases.first().map(|r| r.tag.clone());
     match latest {
         Some(tag) => {
             hb.set_fw_latest(sstr(&if tag.starts_with('v') {
@@ -142,7 +138,7 @@ pub fn recompute_hb_update(ui: &AppWindow, s: &crate::state::State) {
 /// image (`pith-hb-<board>-full.bin`, written at 0x0 over the ROM bootloader
 /// for recovery / one-time migration from the pre-OTA partition layout).
 fn latest_hb_assets(s: &crate::state::State) -> Option<(String, Option<String>, Option<String>)> {
-    let rel = s.releases.iter().find(|r| !r.hb_bin.is_empty())?;
+    let rel = s.hb_releases.first()?;
     let app = rel
         .hb_bin
         .iter()
