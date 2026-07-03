@@ -25,6 +25,7 @@ const PAGES: &[(Page, &str)] = &[
     (Page::Firmware, "firmware"),
     (Page::Device, "device"),
     (Page::Handbrake, "handbrake"),
+    (Page::Pedals, "pedals"),
 ];
 
 /// Run the dashboard in screenshot mode and exit. Returns the number written.

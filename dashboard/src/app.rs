@@ -181,6 +181,7 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
             std::sync::Condvar::new(),
         )),
         hb_out: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
+        pedals_out: Arc::new(Mutex::new(None)),
     });
 
     {
@@ -208,6 +209,7 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
 
     crate::callbacks::wire_callbacks(ui, &ctx);
     crate::hb::wire_hb_callbacks(ui, &ctx);
+    crate::pedals::wire_pedals_callbacks(ui, &ctx);
 
     // Screenshot/headless mode stops here: no network, no background loops.
     if !live {
@@ -232,6 +234,12 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
     rt.spawn_blocking({
         let c = ctx.clone();
         move || crate::hb::hb_device_loop(c)
+    });
+    // The active pedal is likewise its own USB device with its own connection
+    // lifecycle and its own effects-engine tick loop.
+    rt.spawn_blocking({
+        let c = ctx.clone();
+        move || crate::pedals::pedals_device_loop(c)
     });
     // Dedicated writer for the fire-and-forget device streams (telemetry +
     // relatives) — a wedged HID link stalls only this thread, not ingestion.

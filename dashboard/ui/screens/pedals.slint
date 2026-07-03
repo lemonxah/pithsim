@@ -1,0 +1,130 @@
+// Active Pedal page — connection status, live state, and effect-gain
+// controls. Replaces the SimHub plugin's control UI: instead of a curve
+// editor + slider panel talking to SimHub's property bag, these sliders
+// edit a pith_pedals_core::protocol::PedalConfig pushed straight to the
+// device; the *effects* themselves are computed by the dashboard's own
+// telemetry-driven engine (dashboard/src/pedals.rs), not SimHub.
+import { Theme } from "../theme.slint";
+import { Pedals } from "../models.slint";
+import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, Dot, AppSlider } from "../widgets.slint";
+
+component GainRow inherits VerticalLayout {
+    in property <string> label;
+    in property <string> unit: "";
+    in property <int> value;
+    in property <int> maximum: 100;
+    callback changed(int);
+    spacing: 4px;
+    HorizontalLayout {
+        Text { text: root.label; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+        Mono { text: "\{root.value}" + root.unit; font-size: 13px; vertical-alignment: center; }
+    }
+    AppSlider {
+        minimum: 0;
+        maximum: root.maximum;
+        value: root.value;
+        changed(v) => { root.changed(Math.round(v)); }
+    }
+}
+
+export component PedalsScreen inherits Rectangle {
+    background: Theme.bg;
+    Flickable {
+        viewport-width: self.width;
+        VerticalLayout {
+            padding: 32px;
+            spacing: 18px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout { alignment: center; Dot { tint: Pedals.connected ? Theme.green : Theme.text3; } }
+                VerticalLayout {
+                    spacing: 2px;
+                    Text { text: "Pith Active Pedal"; color: Theme.text; font-family: Theme.display-font; font-size: 22px; font-weight: 700; }
+                    Text {
+                        text: Pedals.connected
+                            ? "\{Pedals.board} — fw \{Pedals.fw-version} — \{Pedals.serial}"
+                            : (Pedals.device-found ? "Detected — connecting…" : "Waiting for a pedal…");
+                        color: Theme.text3;
+                        font-family: Theme.mono-font;
+                        font-size: 11px;
+                    }
+                }
+            }
+
+            if !Pedals.connected: Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 6px;
+                    Text { text: "No pedal connected"; color: Theme.text; font-size: 14px; }
+                    Text {
+                        text: "Effects (ABS, RPM, G-force, wheel slip, road impact) come from live game telemetry, the same pipeline the DDU and handbrake use — not SimHub.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            if Pedals.connected: Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 8px;
+                    SectionLabel { text: "LIVE STATE"; }
+                    HorizontalLayout {
+                        spacing: 24px;
+                        VerticalLayout { spacing: 2px; Text { text: "Position"; color: Theme.text3; font-size: 11px; } Mono { text: "\{Pedals.position-pct-x10 / 10}%"; font-size: 18px; } }
+                        VerticalLayout { spacing: 2px; Text { text: "Force"; color: Theme.text3; font-size: 11px; } Mono { text: "\{Pedals.force-n-x10 / 10} N"; font-size: 18px; } }
+                    }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 16px;
+                    SectionLabel { text: "EFFECT GAINS"; }
+                    Text {
+                        text: "Same effects as the reference project's SimHub plugin, driven by pith's own telemetry instead.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    GainRow { label: "ABS pulsation frequency"; unit: " Hz"; value: Pedals.abs-frequency-hz; maximum: 50; changed(v) => { Pedals.abs-frequency-hz = v; } }
+                    GainRow { label: "ABS pulsation amplitude"; value: Pedals.abs-amplitude; changed(v) => { Pedals.abs-amplitude = v; } }
+                    GainRow { label: "RPM vibration"; value: Pedals.rpm-amplitude-kg; changed(v) => { Pedals.rpm-amplitude-kg = v; } }
+                    GainRow { label: "G-force / weight transfer"; unit: "%"; value: Pedals.g-multiplier; changed(v) => { Pedals.g-multiplier = v; } }
+                    GainRow { label: "Wheel slip"; value: Pedals.wheel-slip-amplitude; changed(v) => { Pedals.wheel-slip-amplitude = v; } }
+                    GainRow { label: "Road / kerb impact"; unit: "%"; value: Pedals.road-impact-multiplier; changed(v) => { Pedals.road-impact-multiplier = v; } }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 16px;
+                    SectionLabel { text: "FEEL (PHASE 2 — no actuator yet)"; }
+                    Text {
+                        text: "These tune the admittance model once a motor driver exists (docs/pedals.md). Safe to set now; they only take effect once Phase 2 firmware reads them.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    GainRow { label: "Virtual mass"; unit: "%"; value: Pedals.virtual-mass-pct; changed(v) => { Pedals.virtual-mass-pct = v; } }
+                    GainRow { label: "Virtual damping"; unit: "%"; value: Pedals.virtual-damping-pct; changed(v) => { Pedals.virtual-damping-pct = v; } }
+                }
+            }
+
+            if Pedals.config-status != "": Text { text: Pedals.config-status; color: Theme.text2; font-family: Theme.mono-font; font-size: 11px; }
+
+            HorizontalLayout {
+                spacing: 12px;
+                GhostButton { text: "REFRESH FROM DEVICE"; clicked => { if (Pedals.connected) { Pedals.refresh-config-requested(); } } }
+                Rectangle { }
+                PrimaryButton { text: "PUSH TO DEVICE"; enabled: Pedals.connected; clicked => { Pedals.push-config-requested(); } }
+            }
+            Rectangle { height: 8px; }
+        }
+    }
+}

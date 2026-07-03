@@ -37,6 +37,11 @@ pub struct Ctx {
     /// Latest-wins outbox for the handbrake device thread (see
     /// [`crate::hb::HbOutbound`] for why a single slot, not a queue).
     pub hb_out: Arc<(Mutex<Option<crate::hb::HbOutbound>>, Condvar)>,
+    /// Latest-wins outbox for the pedal device thread (config pushes are
+    /// rare UI actions, not a high-rate stream, so a plain mutex — no
+    /// condvar wakeup needed since the loop already polls at ~50 Hz for
+    /// the effects engine).
+    pub pedals_out: Arc<Mutex<Option<crate::pedals::PedalsOutbound>>>,
 }
 
 impl Ctx {
@@ -66,6 +71,11 @@ impl Ctx {
         let (m, cv) = &*self.hb_out;
         *m.lock().unwrap() = Some(cmd);
         cv.notify_one();
+    }
+
+    /// Queue a command for the pedal device thread (latest wins).
+    pub fn send_pedals(&self, cmd: crate::pedals::PedalsOutbound) {
+        *self.pedals_out.lock().unwrap() = Some(cmd);
     }
 
     pub fn ui_run<F: FnOnce(AppWindow) + Send + 'static>(&self, f: F) {

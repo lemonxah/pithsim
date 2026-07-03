@@ -24,9 +24,10 @@ import { UdpScreen } from "screens/udp.slint";
 import { FirmwareScreen } from "screens/firmware.slint";
 import { DeviceConfigScreen } from "screens/device.slint";
 import { HandbrakeScreen } from "screens/handbrake.slint";
+import { PedalsScreen } from "screens/pedals.slint";
 
 // Re-export globals so C++ can reach them via the generated header.
-export { AppState, Telemetry, TelemetryUdp, ShiftCfg, Buttons, RaceLayout, CarLib, Firmware, DeviceCaps, DeviceCfg, DeviceLog, Hb } from "models.slint";
+export { AppState, Telemetry, TelemetryUdp, ShiftCfg, Buttons, RaceLayout, CarLib, Firmware, DeviceCaps, DeviceCfg, DeviceLog, Hb, Pedals } from "models.slint";
 
 export component AppWindow inherits Window {
     title: "Pith Dashboard";
@@ -51,7 +52,7 @@ export component AppWindow inherits Window {
         HorizontalLayout {
             Sidebar { }
             Rectangle {
-                property <bool> ddu-gated: !AppState.connected && AppState.page != Page.handbrake;
+                property <bool> ddu-gated: !AppState.connected && AppState.page != Page.handbrake && AppState.page != Page.pedals;
                 // content router
                 Rectangle {
                     background: Theme.bg;
@@ -64,6 +65,7 @@ export component AppWindow inherits Window {
                     if AppState.page == Page.firmware: FirmwareScreen { }
                     if AppState.page == Page.device: DeviceConfigScreen { }
                     if AppState.page == Page.handbrake: HandbrakeScreen { }
+                    if AppState.page == Page.pedals: PedalsScreen { }
                 }
                 // "no DDU" gate — blocks interaction with the DDU pages while
                 // the DDU is disconnected.

@@ -1,7 +1,7 @@
 // Shared structs, enums and global singletons. C++ owns the data and writes
 // these globals; the UI reads them and invokes callbacks for actions.
 
-export enum Page { overview, race, shift, cars, udp, firmware, device, handbrake }
+export enum Page { overview, race, shift, cars, udp, firmware, device, handbrake, pedals }
 
 // ---- Telemetry (live device mirror) ----
 export struct TyreCell { temp: int, col: color }
@@ -572,4 +572,40 @@ export global Hb {
     callback flash-latest-requested();
     // In-place update over USB HID (@OTA) — no bootloader dance needed.
     callback install-update-requested();
+}
+
+// ---- Active Pedal (SimHub-replacement effects engine + config) ----
+// One connected pedal for now (see docs/pedals.md — Phase 1 proves the
+// pipeline end to end; a full 3-pedal rig is the natural next step once
+// this is validated on real hardware). The dashboard's effects engine
+// (Rust, hb-style device loop) reads the live telemetry merge and streams
+// PedalAction — this is what replaces the SimHub plugin's per-frame writes.
+export global Pedals {
+    in property <bool> connected: false;
+    in property <bool> device-found: false;
+    in property <string> conn-detail: "";
+    in property <string> board: "";
+    in property <string> fw-version: "";
+    in property <string> serial: "";
+
+    // Live device state (from `?`), refreshed periodically.
+    in property <int> position-pct-x10: 0;
+    in property <int> force-n-x10: 0;
+
+    // Effect gains — a working subset of PedalConfig for a first UI pass
+    // (0..100 sliders map directly to the 0..100 config fields/percent
+    // scales pith-pedals-core::protocol documents per field).
+    in-out property <int> abs-frequency-hz: 12;
+    in-out property <int> abs-amplitude: 0;      // kg/20 units, 0..100
+    in-out property <int> rpm-amplitude-kg: 0;
+    in-out property <int> g-multiplier: 0;       // percent
+    in-out property <int> wheel-slip-amplitude: 0;
+    in-out property <int> road-impact-multiplier: 0; // percent
+    in-out property <int> virtual-mass-pct: 20;
+    in-out property <int> virtual-damping-pct: 50;
+
+    in property <string> config-status: ""; // feedback after push-config
+
+    callback push-config-requested();
+    callback refresh-config-requested();
 }

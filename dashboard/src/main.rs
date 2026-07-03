@@ -15,6 +15,7 @@ mod hb;
 mod loops;
 mod net;
 mod paths;
+mod pedals;
 mod persist;
 mod screenshot;
 mod state;

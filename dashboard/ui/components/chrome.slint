@@ -1,6 +1,6 @@
 // Title bar + left sidebar nav (HANDOFF.md §1 app shell).
 import { Theme } from "../theme.slint";
-import { AppState, Page, Firmware, Hb } from "../models.slint";
+import { AppState, Page, Firmware, Hb, Pedals } from "../models.slint";
 import { Dot } from "../widgets.slint";
 
 export component TitleBar inherits Rectangle {
@@ -261,6 +261,15 @@ export component Sidebar inherits Rectangle {
             fw: Hb.fw-version != "" ? "v" + Hb.fw-version : "";
             active: AppState.page == Page.handbrake;
             clicked => { AppState.page = Page.handbrake; }
+        }
+        GearCard {
+            name: "Pith Pedal";
+            connected: Pedals.connected;
+            detail: Pedals.connected ? Pedals.board : (Pedals.device-found ? "Detected — connecting…" : "Disconnected");
+            serial: Pedals.serial;
+            fw: Pedals.fw-version != "" ? "v" + Pedals.fw-version : "";
+            active: AppState.page == Page.pedals;
+            clicked => { AppState.page = Page.pedals; }
         }
     }
     // hairline divider on the right
