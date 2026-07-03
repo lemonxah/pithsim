@@ -217,13 +217,19 @@ names are informative only for cross-referencing plugin logic.
 
 ## 3. Phasing (why this isn't a one-session port)
 
-**Phase 1 — protocol + effects-trigger engine + dashboard UI (this pass).**
+**Phase 1 — protocol + effects engine + dashboard UI (this pass).**
 Mechanically portable, verifiable without hardware, no motor safety
 implications:
-- `pith-pedals-core`: wire structs, Fletcher-16 checksum, SOF/EOF framing,
-  the 11-point force curve + its interpolation, and the effect-*trigger*
-  logic (the "detect ABS edge, compute G magnitude byte" side — not the
-  waveform generator, which stays firmware-side per §1).
+- `pith-pedals-core`: the config/action/state data model (JSON-encoded, see
+  §1's rationale), the 11-point force curve + its interpolation, and —
+  for full feature parity with the reference project, not just ABS — every
+  effect oscillator it has: ABS, RPM, bite-point, G-force, wheel-slip,
+  road-impact, and 4 custom-vibration slots, each a verbatim port of
+  `ESP32/include/ABSOscillation.h`'s corresponding class, unit-tested
+  against the same bounds/decay behavior as the source. These compute
+  offset *numbers* only — the waveform generator lives here now, ready for
+  Phase 2 to actually apply it to a motor target, but nothing here drives
+  anything.
 - `firmware/pedals` skeleton: boots, exposes the report-id-2 command
   channel + `@CAP`/`@OTA` (copy the handbrake's proven USB shim), receives
   and stores `PedalConfig`, echoes `PedalState`. **No motor/servo driver
