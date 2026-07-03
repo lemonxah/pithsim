@@ -1,6 +1,6 @@
 [package]
 name = "pithddu"
-version = "0.10.9"
+version = "0.10.10"
 edition = "2021"
 resolver = "2"
 rust-version = "1.77"
