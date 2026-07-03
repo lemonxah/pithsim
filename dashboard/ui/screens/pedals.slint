@@ -6,7 +6,8 @@
 // telemetry-driven engine (dashboard/src/pedals.rs), not SimHub.
 import { Theme } from "../theme.slint";
 import { Pedals } from "../models.slint";
-import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, Dot, AppSlider } from "../widgets.slint";
+import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, Dot, AppSlider, FlipCombo } from "../widgets.slint";
+import { LineEdit } from "std-widgets.slint";
 
 component GainRow inherits VerticalLayout {
     in property <string> label;
@@ -77,6 +78,39 @@ export component PedalsScreen inherits Rectangle {
                         VerticalLayout { spacing: 2px; Text { text: "Position"; color: Theme.text3; font-size: 11px; } Mono { text: "\{Pedals.position-pct-x10 / 10}%"; font-size: 18px; } }
                         VerticalLayout { spacing: 2px; Text { text: "Force"; color: Theme.text3; font-size: 11px; } Mono { text: "\{Pedals.force-n-x10 / 10} N"; font-size: 18px; } }
                     }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    SectionLabel { text: "PROFILES"; }
+                    Text {
+                        text: "Save the current gains under a name, per game or car — the dashboard's answer to the SimHub plugin's profile switching. Loading only fills in the fields below; hit PUSH TO DEVICE to apply.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        name-edit := LineEdit {
+                            width: 200px;
+                            text: Pedals.profile-name;
+                            placeholder-text: "profile name";
+                            edited(t) => { Pedals.profile-name = t; }
+                        }
+                        GhostButton { text: "SAVE"; clicked => { Pedals.save-profile-requested(name-edit.text); } }
+                        Rectangle { }
+                    }
+                    if Pedals.profiles.length > 0: HorizontalLayout {
+                        spacing: 10px;
+                        combo := FlipCombo { width: 200px; model: Pedals.profiles; current-index: 0; }
+                        GhostButton { text: "LOAD"; clicked => { Pedals.load-profile-requested(combo.current-value); } }
+                        GhostButton { text: "DELETE"; clicked => { Pedals.delete-profile-requested(combo.current-value); } }
+                        Rectangle { }
+                    }
+                    if Pedals.profiles.length == 0: Text { text: "No saved profiles yet."; color: Theme.text3; font-size: 12px; }
                 }
             }
 

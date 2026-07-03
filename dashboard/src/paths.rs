@@ -52,6 +52,9 @@ pub fn shift_cfg_path() -> PathBuf {
 pub fn udp_cfg_path() -> PathBuf {
     app_dir().join("udp.json")
 }
+pub fn pedals_profiles_path() -> PathBuf {
+    app_dir().join("pedals_profiles.json")
+}
 pub fn board_path() -> PathBuf {
     app_dir().join("board.txt")
 }

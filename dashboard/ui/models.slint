@@ -606,6 +606,18 @@ export global Pedals {
 
     in property <string> config-status: ""; // feedback after push-config
 
+    // Named profiles — the dashboard's answer to the SimHub plugin's per-
+    // game/per-car profile switching (host-side file, see dashboard/src/
+    // pedals.rs). Loading a profile only updates the UI/edit fields — it
+    // does NOT push to the device automatically, so switching profiles
+    // never silently changes a connected device's live behavior; the user
+    // still has to hit PUSH TO DEVICE.
+    in-out property <string> profile-name: "";
+    in property <[string]> profiles: [];
+
     callback push-config-requested();
     callback refresh-config-requested();
+    callback save-profile-requested(string);
+    callback load-profile-requested(string);
+    callback delete-profile-requested(string);
 }

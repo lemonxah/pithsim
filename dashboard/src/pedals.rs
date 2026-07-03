@@ -34,6 +34,46 @@ pub enum PedalsOutbound {
     RefreshConfig,
 }
 
+// ---- Named profiles (the dashboard's answer to the SimHub plugin's
+// per-game/per-car profile system) — a flat name -> PedalConfig store on
+// disk. Save/load happen host-side (UI state <-> file); loading a profile
+// also queues a PushConfig so it takes effect on the device immediately. ----
+
+fn load_profiles() -> std::collections::BTreeMap<String, PedalConfig> {
+    let body = std::fs::read_to_string(crate::paths::pedals_profiles_path()).unwrap_or_default();
+    if body.is_empty() {
+        return Default::default();
+    }
+    serde_json::from_str(&body).unwrap_or_default()
+}
+
+fn save_profiles(profiles: &std::collections::BTreeMap<String, PedalConfig>) -> bool {
+    match serde_json::to_string_pretty(profiles) {
+        Ok(json) => std::fs::write(crate::paths::pedals_profiles_path(), json).is_ok(),
+        Err(_) => false,
+    }
+}
+
+fn push_profiles_model(ui: &AppWindow, names: Vec<String>) {
+    let model: Vec<slint::SharedString> = names.into_iter().map(|n| n.into()).collect();
+    ui.global::<Pedals>()
+        .set_profiles(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
+
+fn config_from_ui(pg: &Pedals) -> PedalConfig {
+    PedalConfig {
+        abs_frequency_hz: pg.get_abs_frequency_hz().clamp(0, 255) as u8,
+        abs_amplitude_kg20: pg.get_abs_amplitude().clamp(0, 255) as u8,
+        rpm_amplitude_kg: pg.get_rpm_amplitude_kg().clamp(0, 255) as u8,
+        g_multiplier: pg.get_g_multiplier().clamp(0, 255) as u8,
+        wheel_slip_amplitude: pg.get_wheel_slip_amplitude().clamp(0, 255) as u8,
+        road_impact_multiplier: pg.get_road_impact_multiplier().clamp(0, 255) as u8,
+        virtual_mass_pct: pg.get_virtual_mass_pct().clamp(0, 255) as u8,
+        virtual_damping_pct: pg.get_virtual_damping_pct().clamp(0, 255) as u8,
+        ..PedalConfig::defaults(PedalId::Brake)
+    }
+}
+
 pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
     let p = ui.global::<Pedals>();
 
@@ -42,21 +82,10 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
         let ui_weak = ui.as_weak();
         move || {
             let Some(u) = ui_weak.upgrade() else { return };
-            let pg = u.global::<Pedals>();
             // A first working slice of PedalConfig from the UI's sliders —
             // everything else keeps its current default until the curve
             // editor + remaining fields land.
-            let cfg = PedalConfig {
-                abs_frequency_hz: pg.get_abs_frequency_hz().clamp(0, 255) as u8,
-                abs_amplitude_kg20: pg.get_abs_amplitude().clamp(0, 255) as u8,
-                rpm_amplitude_kg: pg.get_rpm_amplitude_kg().clamp(0, 255) as u8,
-                g_multiplier: pg.get_g_multiplier().clamp(0, 255) as u8,
-                wheel_slip_amplitude: pg.get_wheel_slip_amplitude().clamp(0, 255) as u8,
-                road_impact_multiplier: pg.get_road_impact_multiplier().clamp(0, 255) as u8,
-                virtual_mass_pct: pg.get_virtual_mass_pct().clamp(0, 255) as u8,
-                virtual_damping_pct: pg.get_virtual_damping_pct().clamp(0, 255) as u8,
-                ..PedalConfig::defaults(PedalId::Brake)
-            };
+            let cfg = config_from_ui(&u.global::<Pedals>());
             c.send_pedals(PedalsOutbound::PushConfig(cfg));
         }
     });
@@ -66,6 +95,58 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
         move || c.send_pedals(PedalsOutbound::RefreshConfig)
     });
 
+    p.on_save_profile_requested({
+        let ui_weak = ui.as_weak();
+        move |name| {
+            let Some(u) = ui_weak.upgrade() else { return };
+            let name = name.trim().to_string();
+            if name.is_empty() {
+                return;
+            }
+            let cfg = config_from_ui(&u.global::<Pedals>());
+            let mut profiles = load_profiles();
+            profiles.insert(name.clone(), cfg);
+            let ok = save_profiles(&profiles);
+            let names: Vec<String> = profiles.keys().cloned().collect();
+            push_profiles_model(&u, names);
+            let msg = if ok {
+                format!("Saved profile \"{name}\"")
+            } else {
+                "Failed to save profile".to_string()
+            };
+            u.global::<Pedals>().set_config_status(sstr(&msg));
+        }
+    });
+
+    p.on_load_profile_requested({
+        let c = ctx.clone();
+        let ui_weak = ui.as_weak();
+        move |name| {
+            let Some(u) = ui_weak.upgrade() else { return };
+            let profiles = load_profiles();
+            let Some(cfg) = profiles.get(name.as_str()) else {
+                return;
+            };
+            apply_config_to_ui(&c, cfg);
+            u.global::<Pedals>()
+                .set_config_status(sstr(&format!("Loaded profile \"{name}\" — push to apply")));
+        }
+    });
+
+    p.on_delete_profile_requested({
+        let ui_weak = ui.as_weak();
+        move |name| {
+            let Some(u) = ui_weak.upgrade() else { return };
+            let mut profiles = load_profiles();
+            profiles.remove(name.as_str());
+            save_profiles(&profiles);
+            let names: Vec<String> = profiles.keys().cloned().collect();
+            push_profiles_model(&u, names);
+        }
+    });
+
+    let names: Vec<String> = load_profiles().keys().cloned().collect();
+    push_profiles_model(ui, names);
     p.set_device_found(device_present(PITH_VID, PID_PEDALS));
 }
 
