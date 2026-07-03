@@ -1,17 +1,20 @@
 //! Shared device transport for all Pith sim-racing gear: the HID
 //! command/log channel, the serial fallback, the DDU `Dash` abstraction
-//! (including the `@OTA` firmware-upload protocol), and the `Handbrake`
-//! calibration API. Used by the dashboard GUI and the `pith-flash` CLI so
-//! every host tool speaks to the devices through exactly one code path.
+//! (including the `@OTA` firmware-upload protocol), the `Handbrake`
+//! calibration API, and the `Pedals` config/action/state API. Used by the
+//! dashboard GUI and the `pith-flash` CLI so every host tool speaks to the
+//! devices through exactly one code path.
 
 pub mod dash;
 pub mod handbrake;
 pub mod hid;
+pub mod pedals;
 pub mod serial;
 
 pub use dash::Dash;
 pub use handbrake::Handbrake;
 pub use hid::device_present;
+pub use pedals::Pedals;
 pub use serial::{PortInfo, Serial};
 
 /// All Pith devices enumerate under the Espressif VID with a Pith-allocated
