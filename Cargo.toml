@@ -9,7 +9,7 @@
 # firmwares.
 [workspace]
 resolver = "2"
-members = ["dashboard", "pith-core", "pith-hb-core", "pith-sim", "pith-ui", "pith-bios", "pith-device", "pith-flash"]
+members = ["dashboard", "pith-core", "pith-hb-core", "pith-pedals-core", "pith-sim", "pith-ui", "pith-bios", "pith-device", "pith-flash"]
 # firmware: separate esp toolchains. pith-shm-bridge: Windows-only (Proton-Wine
 # in-prefix tools), built with `--target x86_64-pc-windows-gnu`.
 exclude = ["firmware", "pith-recovery", "pith-shm-bridge"]

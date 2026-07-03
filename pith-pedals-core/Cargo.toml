@@ -1,0 +1,13 @@
+[package]
+name = "pith-pedals-core"
+version = "0.1.0"
+edition = "2021"
+description = "Shared wire protocol + effect-trigger math for Pith active pedals (firmware + dashboard). Protocol ported field-for-field from ChrGri/DIY-Sim-Racing-FFB-Pedal for compatibility with its force-curve/effect data model."
+license = "MIT"
+repository = "https://github.com/lemonxah/pithsim"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"

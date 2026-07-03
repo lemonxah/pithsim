@@ -22,11 +22,18 @@ pub const PITH_VID: u16 = 0x303A;
 pub const PID_DDU: u16 = 0x4002;
 /// Pith Handbrake (firmware/handbrake, Lolin S2 Mini + HX711).
 pub const PID_HANDBRAKE: u16 = 0x8001;
-// Future gear: allocate the next 0x80xx PID here (e.g. active pedals) and
-// list it in DEVICE_PIDS so enumeration + udev docs stay in one place.
+/// Pith active pedal (firmware/pedals; see docs/pedals.md). One board per
+/// pedal (clutch/brake/throttle), same PID — they're told apart by serial.
+pub const PID_PEDALS: u16 = 0x8002;
+// Future gear: allocate the next 0x80xx PID here and list it in DEVICE_PIDS
+// so enumeration + udev docs stay in one place.
 
 /// Legacy alias for the DDU's PID (predates the multi-device monorepo).
 pub const PITH_PID: u16 = PID_DDU;
 
 /// Every known Pith device type, for "what's plugged in" enumeration.
-pub const DEVICE_PIDS: &[(u16, &str)] = &[(PID_DDU, "DDU"), (PID_HANDBRAKE, "Handbrake")];
+pub const DEVICE_PIDS: &[(u16, &str)] = &[
+    (PID_DDU, "DDU"),
+    (PID_HANDBRAKE, "Handbrake"),
+    (PID_PEDALS, "Pedals"),
+];

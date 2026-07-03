@@ -3899,6 +3899,14 @@ name = "pith-hb-core"
 version = "0.1.0"
 
 [[package]]
+name = "pith-pedals-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pith-sim"
 version = "0.1.0"
 dependencies = [
