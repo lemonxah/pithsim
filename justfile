@@ -89,9 +89,9 @@ version:
 # tag, and push (CI builds the bins from the tag and publishes the GitHub
 # Release). The tag prefix + the crate version stay in sync. Every device's
 # firmware versions independently on its own stream/tag; the dashboard looks
-# each device's updates up by tag prefix (firmware-v* = DDU, handbrake-v*).
+# each device's updates up by tag prefix (ddu-v*, handbrake-v*, ...).
 #   just release dashboard          -> bump patch of the latest dashboard-v* tag
-#   just release firmware           -> bump patch of the latest firmware-v* tag (DDU)
+#   just release ddu                -> bump patch of the latest ddu-v* tag
 #   just release handbrake          -> bump patch of the latest handbrake-v* tag
 #   just release dashboard 1.2.3    -> release that stream exactly at 1.2.3
 release stream version="":
@@ -100,9 +100,9 @@ release stream version="":
     stream="{{stream}}"
     case "$stream" in
         dashboard) manifests=(dashboard/Cargo.toml) ;;
-        firmware)  manifests=(firmware/ddu/Cargo.toml) ;;
+        ddu)       manifests=(firmware/ddu/Cargo.toml) ;;
         handbrake) manifests=(firmware/handbrake/Cargo.toml) ;;
-        *) echo "usage: just release <dashboard|firmware|handbrake> [version]" >&2; exit 1 ;;
+        *) echo "usage: just release <dashboard|ddu|handbrake> [version]" >&2; exit 1 ;;
     esac
     git fetch --tags --quiet
     ver="{{version}}"

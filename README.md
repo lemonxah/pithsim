@@ -60,7 +60,7 @@ sudo cp 99-pith.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
 Plug in any Pith device and launch `pith-dashboard` — every connected device
 shows up as a status card at the bottom of the sidebar, and each gets its own
 page. **Every device updates in place over USB (@OTA) from its own release
-stream** — `firmware-v*` for the DDU, `handbrake-v*` for the handbrake, each
+stream** — `ddu-v*` for the DDU, `handbrake-v*` for the handbrake, each
 independently versioned: the DDU from its Firmware page, the handbrake from
 its page's INSTALL button — no buttons to hold, the device flips app slots
 and reboots itself (a failed boot rolls back). The ROM bootloader (hold BOOT,
@@ -221,7 +221,7 @@ OTA writes the inactive main slot; the next boot's recovery step chain-loads it.
 Independent release streams from this one repo, via tag prefixes:
 
 - `dashboard-v*` → desktop app release (Linux tarball + `.deb`, Windows zip)
-- `firmware-v*`  → firmware app image (`pithddu-<board>.bin`)
+- `ddu-v*`       → DDU firmware app image (`pithddu-<board>.bin`)
 - recovery (`pith-recovery`) is flashed to the `factory` partition separately; it
   changes rarely and is not part of the firmware OTA stream.
 

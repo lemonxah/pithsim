@@ -1,5 +1,5 @@
 # Handbrake firmware — its own release stream (handbrake-v*), versioned
-# independently of the DDU's firmware-v* stream. Built on every push so
+# independently of the DDU's ddu-v* stream. Built on every push so
 # breakage is caught in CI; a tag publishes the release assets.
 name: handbrake
 

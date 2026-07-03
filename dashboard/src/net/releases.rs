@@ -43,7 +43,7 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
     ctx.clone().spawn(async move {
         let (body, code) = http_get(FIRMWARE_RELEASES_URL).await;
         // Every device's firmware versions independently on its own release
-        // stream, told apart by tag prefix: firmware-vX.Y.Z is the DDU,
+        // stream, told apart by tag prefix: ddu-vX.Y.Z is the DDU,
         // handbrake-vX.Y.Z the handbrake. The prefix is stripped so the
         // version reads + compares like the device's `X.Y.Z` from @CAP.
         let mut rels: Vec<FwRelease> = Vec::new();
@@ -57,7 +57,7 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                     let raw_tag = r.get("tag_name").and_then(|x| x.as_str()).unwrap_or("");
                     let (is_hb, tag) = if let Some(t) = raw_tag.strip_prefix("handbrake-") {
                         (true, t)
-                    } else if let Some(t) = raw_tag.strip_prefix("firmware-") {
+                    } else if let Some(t) = raw_tag.strip_prefix("ddu-") {
                         (false, t)
                     } else {
                         continue; // dashboard-v* etc.

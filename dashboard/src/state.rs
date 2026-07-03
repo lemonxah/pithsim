@@ -170,7 +170,7 @@ pub struct FwRelease {
     /// DDU app images by board id (`pithddu-<board>.bin` assets).
     pub board_bin: BTreeMap<String, String>,
     /// Handbrake app images by board id (`pith-hb-<board>.bin` assets) — the
-    /// same firmware-v* release carries every device's firmware.
+    /// handbrake stream's releases carry these (ddu releases: board_bin).
     pub hb_bin: BTreeMap<String, String>,
 }
 
@@ -262,7 +262,7 @@ pub struct State {
     pub device_fw: String,
     pub hb_fw: String, // handbrake firmware version (from its @CAP), for update checks
     pub serial_ports: Vec<crate::device::PortInfo>,
-    pub releases: Vec<FwRelease>,    // DDU stream (firmware-v* tags)
+    pub releases: Vec<FwRelease>,    // DDU stream (ddu-v* tags)
     pub hb_releases: Vec<FwRelease>, // handbrake stream (handbrake-v* tags)
 
     pub device_log: Vec<String>, // firmware logs streamed over HID report id 3

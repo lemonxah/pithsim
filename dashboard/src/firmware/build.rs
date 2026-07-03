@@ -112,7 +112,7 @@ pub fn start_firmware_build(ctx: &Arc<Ctx>) {
     let ctx = ctx.clone();
     ctx.clone().spawn(async move {
         // Cross-compile, then pack the app image the dashboard installs over OTA —
-        // identical to the `firmware-v*` CI (`espflash save-image`).
+        // identical to the `ddu-v*` CI (`espflash save-image`).
         let tail = format!(
             "cargo build --release && \
              espflash save-image --chip esp32s3 \
