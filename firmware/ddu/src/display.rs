@@ -15,7 +15,6 @@ use std::time::Duration;
 
 use esp_idf_svc::hal::delay::Ets;
 use esp_idf_svc::hal::gpio::{AnyIOPin, Output, PinDriver};
-use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::hal::spi::{
     config::Config as SpiConfig, Dma, SpiDeviceDriver, SpiDriver, SpiDriverConfig,
 };
@@ -359,18 +358,11 @@ fn make_orientation(rot: u8, flip_h: bool, flip_v: bool) -> Orientation {
     o
 }
 
-fn display_task() {
-    let peripherals = match Peripherals::take() {
-        Ok(p) => p,
-        Err(e) => {
-            log::error!("peripherals take failed: {e:?}");
-            return;
-        }
-    };
+fn display_task(spi2: esp_idf_svc::hal::spi::SPI2) {
     let pins = state::with(|s| s.pins);
 
     let driver = match SpiDriver::new(
-        peripherals.spi2,
+        spi2,
         unsafe { AnyIOPin::new(pins.sclk) },
         unsafe { AnyIOPin::new(pins.mosi) },
         Some(unsafe { AnyIOPin::new(pins.miso) }),
@@ -958,11 +950,13 @@ fn ota_pct() -> i32 {
     ota::progress_pct()
 }
 
-/// Spawn the display + touch + UI task.
-pub fn spawn() {
+/// Spawn the display + touch + UI task. `spi2` comes from the one
+/// `Peripherals::take()` in `main` (the WiFi transport owns the modem from
+/// the same take, so this task can no longer take the whole set itself).
+pub fn spawn(spi2: esp_idf_svc::hal::spi::SPI2) {
     thread::Builder::new()
         .stack_size(12288)
         .name("display".into())
-        .spawn(display_task)
+        .spawn(move || display_task(spi2))
         .expect("spawn display task");
 }

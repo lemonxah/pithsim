@@ -142,6 +142,19 @@ pub fn parse(b: &[u8]) -> Option<Telemetry> {
         g => g,
     };
     t.gear = le::gear_byte(gear);
+    // Wheel slip: per-wheel linear speed = wheelAngularSpeed (@0xA4, rad/s) ×
+    // tyreRadius (@0xB4, m) vs body speed (@0x4C, m/s). slip = |wheel − body| /
+    // max(body, 1). Max across wheels, ×100. Needs the packet through 0xC4.
+    if b.len() >= 0xC4 {
+        let mut wheels = [0.0f32; 4];
+        for (i, w) in wheels.iter_mut().enumerate() {
+            *w = le::f32(b, 0xA4 + i * 4) * le::f32(b, 0xB4 + i * 4);
+        }
+        t.wheel_slip = crate::ffb::body_relative_slip(le::f32(b, 0x4C), wheels);
+    }
+    // GT7 exposes no chassis G-force channel (g_long_x100 / g_lat_x100 left 0)
+    // and only suspension POSITION (TireSusHeight, no velocity), so susp_impact
+    // stays 0.
     Some(t)
 }
 

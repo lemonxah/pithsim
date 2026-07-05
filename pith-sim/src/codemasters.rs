@@ -1,11 +1,18 @@
 //! Codemasters "extradata" UDP telemetry decoder — DiRT Rally, DiRT Rally 2.0,
-//! DiRT 4, the GRID series, and EA SPORTS WRC (which reuses the format).
+//! DiRT 4 and the GRID series. NOT EA SPORTS WRC: that title never emits this
+//! legacy array — it has a new JSON-configurable UDP system with its own
+//! default 237-byte packet, decoded by [`super::eawrc`].
 //!
 //! The packet is a flat little-endian `f32` array (no header/magic), so
 //! `byte_offset = index * 4`. We require the full **extradata=3** layout, whose
 //! wire size is 264 bytes — distinct from every other decoder's packet length,
 //! which is how we avoid mis-claiming another game's datagram. RPM fields are
 //! reported as rpm/10, so we scale ×10.
+//!
+//! This format also doubles as a community lingua franca: telemetry exporter
+//! mods (e.g. SpaceMonkey, or a future CarX Drift Racing Online BepInEx mod —
+//! see docs/telemetry-games.md) deliberately emit it so tools like this one
+//! work unchanged.
 
 use super::decoders::{Decoded, GameDecoder};
 use super::le;
@@ -21,11 +28,11 @@ pub struct CodemastersDecoder;
 
 impl GameDecoder for CodemastersDecoder {
     fn name(&self) -> &'static str {
-        "DiRT / GRID / WRC (Codemasters)"
+        "DiRT / GRID (Codemasters)"
     }
 
     fn decode(&self, b: &[u8]) -> Option<Decoded> {
-        // extradata=3 emits a 264-byte datagram (DiRT Rally 2.0 / EA WRC). This
+        // extradata=3 emits a 264-byte datagram (DiRT Rally 2.0 etc.). This
         // length is unique among our decoders.
         if b.len() != 264 {
             return None;
@@ -70,6 +77,23 @@ impl GameDecoder for CodemastersDecoder {
         // World position (metres) for the self-learned map.
         t.pos_x = fi(b, 4).round() as i32;
         t.pos_z = fi(b, 6).round() as i32;
+
+        // Chassis G-forces — already in g units: lateral @idx 34, longitudinal
+        // @idx 35 (+accel / −brake).
+        t.g_lat_x100 = (fi(b, 34) * 100.0).round() as i32;
+        t.g_long_x100 = (fi(b, 35) * 100.0).round() as i32;
+        // Wheel slip: per-wheel wheel speed (idx 25..28, m/s) vs body speed
+        // (idx 7), max across wheels ×100 (see `ffb::body_relative_slip`).
+        t.wheel_slip = crate::ffb::body_relative_slip(
+            fi(b, 7),
+            [fi(b, 25), fi(b, 26), fi(b, 27), fi(b, 28)],
+        );
+        // Suspension VELOCITY (idx 21..24, m/s) → impact proxy: peak |v|
+        // normalized to 0..1000 against a documented 2.0 m/s cap (hard bottom-out).
+        t.susp_impact = crate::ffb::susp_impact_from_velocity(
+            [fi(b, 21), fi(b, 22), fi(b, 23), fi(b, 24)],
+            crate::ffb::SUSP_V_CAP_HARD_BOTTOM_OUT,
+        );
 
         Some(Decoded {
             telem: t,

@@ -19,10 +19,14 @@ mod hx711;
 mod ota;
 mod usb;
 
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 
+use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::peripherals::Peripherals;
 use esp_idf_svc::log::EspLogger;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 
 use autozero::AutoZero;
 use hx711::{Hx711, Iir};
@@ -41,6 +45,11 @@ fn main() {
     ota::mark_valid();
 
     let peripherals = Peripherals::take().expect("peripherals already taken");
+
+    // Take the default NVS partition ONCE (singleton) — shared by the
+    // calibration store and the WiFi driver/credentials.
+    let nvs_part = EspDefaultNvsPartition::take().ok();
+
     let mut cell = Hx711::new(peripherals.pins.gpio1, peripherals.pins.gpio2)
         .expect("HX711 GPIO init failed");
     // No smoothing by default (shift 0 = passthrough): at a HX711's typical
@@ -56,11 +65,46 @@ fn main() {
     // without needing the app or a manual recalibration.
     let mut auto_zero = AutoZero::new();
 
-    let mut rt = usb::Runtime::new();
+    let mut rt = usb::Runtime::new(nvs_part.clone());
+
+    // WiFi transport (optional): connects with NVS-stored creds (provisioned
+    // via @WIFI), streams the axis/state to the dashboard, and relays
+    // @-commands. If the radio/NVS/event-loop can't init, we log and stay
+    // USB-only. The game axis over USB HID is unaffected.
+    let wifi_shared = Arc::new(pith_fw_wifi::WifiShared::new());
+    match (EspSystemEventLoop::take(), nvs_part) {
+        (Ok(sysloop), Some(nvs)) => {
+            pith_fw_wifi::spawn(
+                peripherals.modem,
+                sysloop,
+                nvs,
+                wifi_shared.clone(),
+                serial.to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+                pith_fw_wifi::WifiOpts {
+                    kind: "handbrake",
+                    stream_axis: true,
+                    ota: Some(pith_fw_wifi::OtaHooks {
+                        begin: ota::begin,
+                        feed: ota::feed,
+                        active: ota_active,
+                    }),
+                },
+            );
+        }
+        _ => log::warn!("wifi: event loop / NVS unavailable — USB-only"),
+    }
 
     let mut ticks: u32 = 0;
     loop {
-        usb::poll_hid(&mut rt);
+        usb::poll_hid(&mut rt, &wifi_shared);
+
+        // Dispatch any commands received over WiFi through the same handler.
+        let wifi_cmds: Vec<String> = wifi_shared.rx.lock().unwrap().drain(..).collect();
+        for cmd in wifi_cmds {
+            let reply = usb::handle_command(&cmd, &mut rt, &wifi_shared);
+            wifi_shared.tx.lock().unwrap().push(reply);
+        }
 
         if ota::should_reboot() {
             // Give the queued OTADONE reply time to flush over HID first.
@@ -73,7 +117,13 @@ fn main() {
         if let Some(sample) = cell.try_read() {
             rt.raw = filter.push(sample);
             auto_zero.observe(rt.raw, &mut rt.pending);
-            usb::push_axis(rt.output());
+            let axis = rt.output();
+            usb::push_axis(axis);
+            // Publish the axis for the WiFi thread to stream.
+            wifi_shared.axis.store(axis, Ordering::Relaxed);
+            if let Ok(mut sl) = wifi_shared.state_line.try_lock() {
+                *sl = format!("raw={} axis={}", rt.raw, axis);
+            }
             // Keep the channel clean (and the CPU on flash writes) mid-OTA.
             if !ota::ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
                 usb::push_telem(&rt);
@@ -86,4 +136,9 @@ fn main() {
             log::info!("alive — usb mounted={} raw={}", usb::mounted(), rt.raw);
         }
     }
+}
+
+/// `pith_fw_wifi::OtaHooks::active` adapter (fn pointer, so no closure).
+fn ota_active() -> bool {
+    ota::ACTIVE.load(Ordering::SeqCst)
 }

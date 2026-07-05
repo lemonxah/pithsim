@@ -55,6 +55,12 @@ pub fn udp_cfg_path() -> PathBuf {
 pub fn pedals_profiles_path() -> PathBuf {
     app_dir().join("pedals_profiles.json")
 }
+/// Per-profile game/car auto-switch bindings (profile name -> comma-separated
+/// game-sim-id / car-substring keys). Kept separate from the profile configs
+/// so the config file format stays untouched.
+pub fn pedals_profile_bindings_path() -> PathBuf {
+    app_dir().join("pedals_profile_bindings.json")
+}
 pub fn board_path() -> PathBuf {
     app_dir().join("board.txt")
 }

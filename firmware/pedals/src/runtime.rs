@@ -1,54 +1,105 @@
-//! Shared runtime state: the active [`PedalConfig`], the latest
-//! [`PedalAction`] from the dashboard's effects engine, and the device's
-//! live [`PedalState`].
+//! Firmware runtime: owns the live [`PedalConfig`] and the host-tested
+//! [`pith_pedals_core::controller::Controller`] that turns a loadcell reading
+//! into a joystick axis + servo target. All the real control math lives in
+//! that crate (and is unit-tested on the host); this struct is the thin glue
+//! the USB/OTA/main loop drives.
 //!
-//! **Phase 1 scope** (see `docs/pedals.md`): [`Runtime::sample`] is a
-//! placeholder — it does NOT read a real loadcell or drive a real motor.
-//! It produces a bounded, deterministic value purely so the USB/JSON/OTA
-//! pipeline is provable end-to-end on real hardware before any actuator
-//! code exists. Wiring an ADS1220 loadcell and a stepper/servo driver is
-//! Phase 2, bench-validated before it touches a physical actuator.
+//! Motor output is **disarmed by default**. `tick` always computes the
+//! target position (so telemetry/tuning work immediately), but `main` only
+//! forwards it to the servo once the pedal is homed AND the user has armed it
+//! (`@ARM`) after the bench validation in `docs/pedals.md` §0. Until a real
+//! ADS1256 reading and homing are wired by `main`, `tick` runs on a
+//! placeholder code of 0 → the axis reads 0% and no motor command is sent.
 
+use pith_pedals_core::controller::{Controller, Output};
 use pith_pedals_core::protocol::{PedalAction, PedalConfig, PedalId, PedalState};
 
 pub struct Runtime {
     pub config: PedalConfig,
-    pub action: PedalAction,
+    pub controller: Controller,
     pub state: PedalState,
+    /// Latest control output (axis/target) for `main` + the `?` status reply.
+    pub last: Output,
+    /// True once `main` has homed the pedal (travel envelope known).
+    pub homed: bool,
+    /// True once the user has armed motor output post-validation (`@ARM`).
+    pub armed: bool,
+    soft_min_steps: i32,
 }
 
 impl Runtime {
     pub fn new() -> Self {
+        // Brake is a safe starting default; the wizard sends the real
+        // pedal_type + geometry via @CFG before the pedal is used.
+        let config = PedalConfig::defaults(PedalId::Brake);
+        let controller = Controller::new(&config);
         Runtime {
-            // Real hardware should call @CFG with its actual pedal_type once
-            // the wizard runs; Brake is just a starting default.
-            config: PedalConfig::defaults(PedalId::Brake),
-            action: PedalAction::default(),
+            config,
+            controller,
             state: PedalState::default(),
+            last: Output::default(),
+            homed: false,
+            armed: false,
+            soft_min_steps: 0,
         }
     }
 
-    /// PLACEHOLDER — no sensor/actuator yet (Phase 1, see module docs). Holds
-    /// position/force at zero so the joystick axis and `?` status are well-
-    /// defined while the rest of the pipeline (USB, config round-trip, OTA)
-    /// gets proven out.
-    pub fn sample(&mut self) {
-        self.state.position_pct_x10 = 0;
-        self.state.force_n_x10 = 0;
-        self.state.error_code = 0;
-        self.state.servo_on = false;
+    /// Absolute step index of the soft-min endstop (0 until homed).
+    pub fn soft_min(&self) -> i32 {
+        self.soft_min_steps
     }
 
-    /// The 0..=65535 axis value for the current state, honoring
-    /// `travel_as_joystick_output` (force vs. travel as the game-facing axis).
+    /// Install the homed travel envelope (absolute steps) and mark the pedal
+    /// homed. Driven by the `@HOME` command with bench-measured endstop
+    /// values — NOT run automatically, since a real sweep drives the motor
+    /// into its endstops and must be operator-supervised.
+    pub fn home(&mut self, soft_min: i32, soft_max: i32, hard_min: i32, hard_max: i32) {
+        self.soft_min_steps = soft_min;
+        self.controller
+            .set_travel(soft_min, soft_max, hard_min, hard_max);
+        self.homed = true;
+    }
+
+    /// Replace the config and rebuild the controller's derived parameters.
+    pub fn apply_config(&mut self, config: PedalConfig) {
+        self.controller.apply_config(&config);
+        self.config = config;
+    }
+
+    /// Feed the latest effect action from the dashboard's effects engine.
+    pub fn apply_action(&mut self, action: PedalAction, now_ms: i64) {
+        self.controller.apply_action(action, now_ms);
+    }
+
+    /// Run one control step. `raw_code` is the signed 24-bit ADS1256 reading
+    /// (0 when no loadcell is present yet), `phys_steps_from_min` the measured
+    /// servo position. Updates `self.last` + `self.state` and returns the
+    /// output so `main` can push the axis and (if armed+homed) the target.
+    pub fn tick(
+        &mut self,
+        raw_code: i32,
+        phys_steps_from_min: f32,
+        tracking_error_steps: i32,
+        now_ms: i64,
+        dt_us: u32,
+    ) -> Output {
+        let out = self.controller.tick(
+            raw_code,
+            phys_steps_from_min,
+            tracking_error_steps,
+            now_ms,
+            dt_us,
+        );
+        self.last = out;
+        self.state.position_pct_x10 = (out.position_01 * 1000.0).clamp(0.0, 1000.0) as u16;
+        self.state.force_n_x10 = (out.force_kg * 9.81 * 10.0).clamp(0.0, 65535.0) as u16;
+        self.state.joystick_output = out.joystick;
+        self.state.servo_on = self.armed;
+        out
+    }
+
+    /// The 0..=65535 axis value from the last tick, for the HID report.
     pub fn output(&self) -> u16 {
-        let val_x10 = if self.config.travel_as_joystick_output {
-            self.state.position_pct_x10
-        } else {
-            // Force is only meaningful relative to max_force; without a real
-            // loadcell this is always 0 in Phase 1.
-            self.state.force_n_x10
-        };
-        ((val_x10 as u32 * 65535) / 1000).min(65535) as u16
+        self.last.joystick
     }
 }

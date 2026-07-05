@@ -7,7 +7,7 @@
 //! connect) — the full `@`-command set, OTA, and NVS land in 2b.
 
 use std::ffi::CString;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use esp_idf_svc::sys;
 use pith_core::simhub::{self, Telemetry};
@@ -17,6 +17,9 @@ use pith_core::simhub::{self, Telemetry};
 pub enum Transport {
     Cdc,
     Hid,
+    /// WiFi/UDP (see `pith-fw-wifi` + `main`'s drain loop) — replies queue
+    /// into the shared WiFi tx and go out as `RE` packets.
+    Wifi,
 }
 
 const LINE_MAX: usize = 8192; // fits a full layout/profile JSON push
@@ -33,6 +36,26 @@ impl LineBuf {
 // Per-transport line accumulators so CDC telemetry and HID commands don't mix.
 static CDC_LINE: Mutex<LineBuf> = Mutex::new(LineBuf::new());
 static HID_LINE: Mutex<LineBuf> = Mutex::new(LineBuf::new());
+// WiFi lines arrive as whole datagram lines (no byte-stream accumulation),
+// but the accumulator exists so `feed(Transport::Wifi, …)` stays well-defined.
+static WIFI_LINE: Mutex<LineBuf> = Mutex::new(LineBuf::new());
+
+// Shared state with the WiFi thread (`pith-fw-wifi`), set once at boot by
+// `main` when the radio comes up. Used by `reply(Transport::Wifi, …)` and the
+// `@WIFI` provisioning command.
+static WIFI: OnceLock<std::sync::Arc<pith_fw_wifi::WifiShared>> = OnceLock::new();
+
+/// Install the WiFi shared handle (called once from `main`).
+pub fn set_wifi(shared: std::sync::Arc<pith_fw_wifi::WifiShared>) {
+    let _ = WIFI.set(shared);
+}
+
+/// Route one line received over WiFi through the normal dispatcher —
+/// `$` telemetry frames feed the screens/LEDs exactly like CDC frames, and
+/// `@`-commands reply back over WiFi as `RE` packets.
+pub fn dispatch_wifi_line(line: &str) {
+    dispatch(Transport::Wifi, line.trim());
+}
 // Raw HID-OUT bytes buffered by the USB callback for the main task to process.
 // The callback runs on the small TinyUSB task; doing feed/dispatch/parse there
 // overflows its stack and crashes, so we only copy bytes here and drain on main.
@@ -101,6 +124,7 @@ const fn telem_zero() -> Telemetry {
         tt_avg_fl: 0, tt_avg_fr: 0, tt_avg_rl: 0, tt_avg_rr: 0,
         comp_fl: 0, comp_fr: 0, comp_rl: 0, comp_rr: 0,
         tc_slip: 0, tc_cut: 0, virtual_energy: 0, ve_per_lap: 0, fuel_is_ve: 0,
+        g_long_x100: 0, g_lat_x100: 0, wheel_slip: 0, susp_impact: 0,
     }
 }
 
@@ -186,6 +210,7 @@ fn feed(t: Transport, bytes: &[u8]) {
     let lock = match t {
         Transport::Cdc => &CDC_LINE,
         Transport::Hid => &HID_LINE,
+        Transport::Wifi => &WIFI_LINE,
     };
     // Collect complete lines under the lock, dispatch after releasing it.
     let mut lines: Vec<String> = Vec::new();
@@ -250,6 +275,21 @@ fn dispatch(t: Transport, line: &str) {
     if line.starts_with("@CAP") {
         let cap = crate::state::with(|s| s.cap_json(crate::device::serial()));
         reply(t, &cap);
+        return;
+    }
+    // Provision WiFi: `@WIFI <ssid> <password>` — hands credentials to the
+    // WiFi thread (persists to NVS + connects, no reboot). The password may
+    // contain spaces (everything after the SSID token).
+    if let Some(rest) = line.strip_prefix("@WIFI") {
+        let rest = rest.trim();
+        match (WIFI.get(), rest.split_once(' ')) {
+            (Some(wifi), Some((ssid, pass))) => {
+                *wifi.new_creds.lock().unwrap() = Some((ssid.to_string(), pass.to_string()));
+                reply(t, "OK wifi credentials saved\n");
+            }
+            (None, _) => reply(t, "ERR wifi unavailable\n"),
+            (_, None) => reply(t, "ERR usage @WIFI ssid password\n"),
+        }
         return;
     }
     if line == "@T" {
@@ -430,6 +470,12 @@ pub(crate) fn reply(t: Transport, s: &str) {
                 tx.buf.extend_from_slice(s.as_bytes());
             }
             pump_hid_tx();
+        }
+        Transport::Wifi => {
+            // Queue for the WiFi thread, which sends it as an `RE` packet.
+            if let Some(wifi) = WIFI.get() {
+                wifi.tx.lock().unwrap().push(s.to_string());
+            }
         }
     }
 }

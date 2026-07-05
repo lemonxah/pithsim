@@ -136,6 +136,14 @@ pub struct Telemetry {
     pub virtual_energy: i32,
     pub ve_per_lap: i32,
     pub fuel_is_ve: i32,
+    // Chassis G-forces, ×100 (signed): g_long_x100 = longitudinal (+accel / −brake),
+    // g_lat_x100 = lateral. Kept as a scaled int so they ride the integer $-frame.
+    pub g_long_x100: i32,
+    pub g_lat_x100: i32,
+    // Grip diagnostics: wheel_slip = max over wheels of |slip ratio| ×100;
+    // susp_impact = peak per-wheel suspension velocity normalized to 0..=1000.
+    pub wheel_slip: i32,
+    pub susp_impact: i32,
 }
 
 impl Telemetry {
@@ -253,6 +261,12 @@ impl Telemetry {
         a!(self.virtual_energy);
         a!(self.ve_per_lap);
         a!(self.fuel_is_ve);
+        // Chassis G-forces (×100 signed) then grip diagnostics — appended after
+        // fuel_is_ve; MUST stay in this order (field_registry.json + parse_line).
+        a!(self.g_long_x100);
+        a!(self.g_lat_x100);
+        a!(self.wheel_slip);
+        a!(self.susp_impact);
         s
     }
 }
@@ -659,6 +673,19 @@ pub fn parse_line(line: &str) -> Option<Telemetry> {
             break 'fields;
         }
         if !c.opt_field(&mut t.fuel_is_ve) {
+            break 'fields;
+        }
+        // Chassis G-forces (×100 signed) then grip diagnostics — same order as to_frame.
+        if !c.opt_field(&mut t.g_long_x100) {
+            break 'fields;
+        }
+        if !c.opt_field(&mut t.g_lat_x100) {
+            break 'fields;
+        }
+        if !c.opt_field(&mut t.wheel_slip) {
+            break 'fields;
+        }
+        if !c.opt_field(&mut t.susp_impact) {
             break 'fields;
         }
     }

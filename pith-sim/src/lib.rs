@@ -1,8 +1,8 @@
 //! pith-sim — reusable sim-racing telemetry data sources.
 //!
 //! Turns raw bytes from a sim into a normalized [`pith_core::simhub::Telemetry`]:
-//! - **passive UDP decoders** (Forza, F1/Codemasters, Project CARS/AMS2,
-//!   OutGauge, PiBoSo family) behind the [`decoders`] registry,
+//! - **passive UDP decoders** (Forza, F1/Codemasters, EA SPORTS WRC, Project
+//!   CARS/AMS2, OutGauge, PiBoSo family) behind the [`decoders`] registry,
 //! - **active connector protocols** (ACC broadcasting, Assetto Corsa, GT7),
 //! - **shared-memory parsers** (rF2/LMU, AC/ACC, RaceRoom) in [`shm`].
 //!
@@ -13,7 +13,9 @@ pub mod ac;
 pub mod acc;
 pub mod codemasters;
 pub mod decoders;
+pub mod eawrc;
 pub mod f1;
+pub mod ffb;
 pub mod forza;
 pub mod gt7;
 pub mod le;

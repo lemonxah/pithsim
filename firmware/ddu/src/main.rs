@@ -15,8 +15,13 @@ mod state;
 mod ui;
 mod usb;
 
+use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
+
+use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
 
 fn main() {
     esp_idf_svc::sys::link_patches();
@@ -44,10 +49,16 @@ fn main() {
     };
     log::info!("pithddu boot — serial {serial} (reset: {rr_name})");
 
+    // Take the hardware singletons ONCE: the display task gets SPI2, the WiFi
+    // thread gets the modem, and the default NVS partition is shared between
+    // the config store and the WiFi driver/credentials.
+    let peripherals = Peripherals::take().expect("peripherals already taken");
+    let nvs_part = EspDefaultNvsPartition::take().ok();
+
     // Restore PC-pushed config (pins, layout, buttons, car, brightness) from NVS.
     // The LED task re-applies the saved car shift-light profile itself (see
     // led::spawn); the dashboard also re-pushes the live @C on reconnect.
-    state::init();
+    state::init(nvs_part.clone());
 
     // Recovery (factory) chain-loaded us; point the boot partition back at it so the
     // NEXT reset returns to recovery — it's always the front door. Done early so even
@@ -69,7 +80,36 @@ fn main() {
     hid::spawn();
     sim::spawn();
     // Displays + touch + UI (own task).
-    display::spawn();
+    display::spawn(peripherals.spi2);
+
+    // WiFi transport (optional): the DDU receives `$` telemetry frames over
+    // UDP — a fully wireless dash, no PC cable — and answers the same
+    // `@`-command protocol. Credentials are provisioned via `@WIFI` over USB.
+    // If the radio/NVS/event-loop can't init, we log and stay USB-only.
+    let wifi_shared = Arc::new(pith_fw_wifi::WifiShared::new());
+    match (EspSystemEventLoop::take(), nvs_part) {
+        (Ok(sysloop), Some(nvs)) => {
+            usb::set_wifi(wifi_shared.clone());
+            pith_fw_wifi::spawn(
+                peripherals.modem,
+                sysloop,
+                nvs,
+                wifi_shared.clone(),
+                serial.to_string(),
+                env!("CARGO_PKG_VERSION").to_string(),
+                pith_fw_wifi::WifiOpts {
+                    kind: "ddu",
+                    stream_axis: false, // the DDU has no joystick axis to stream
+                    ota: Some(pith_fw_wifi::OtaHooks {
+                        begin: ota_begin_wifi,
+                        feed: ota_feed_wifi,
+                        active: ota_active,
+                    }),
+                },
+            );
+        }
+        _ => log::warn!("wifi: event loop / NVS unavailable — USB-only"),
+    }
 
     // We booted and ran successfully — confirm this image so a just-OTA'd update
     // isn't rolled back on the next reset.
@@ -84,6 +124,23 @@ fn main() {
         usb::poll_hid(); // drain HID-OUT bytes here (big stack) — the callback only buffers
         usb::pump_log_tx(); // flush queued logs to the GUI during quiet periods
         ota::check_timeout();
+
+        // Drain lines received over WiFi: `$` telemetry frames feed the
+        // screens/LEDs like CDC frames; `@`-commands reply via `RE` packets.
+        let wifi_lines: Vec<String> = wifi_shared.rx.lock().unwrap().drain(..).collect();
+        for line in wifi_lines {
+            usb::dispatch_wifi_line(&line);
+        }
+        if ticks % 100 == 0 {
+            if let Ok(mut sl) = wifi_shared.state_line.try_lock() {
+                *sl = format!(
+                    "usb={} telem_age_ms={}",
+                    usb::mounted(),
+                    unsafe { esp_idf_svc::sys::esp_timer_get_time() / 1000 }
+                        - usb::last_telem_ms()
+                );
+            }
+        }
 
         // Ran stably past the risky boot window (~5 s) -> declare this boot good,
         // which clears the fail counter the recovery app displays.
@@ -109,4 +166,16 @@ fn main() {
             log::info!("alive — usb mounted={}", usb::mounted());
         }
     }
+}
+
+// `pith_fw_wifi::OtaHooks` adapters (fn pointers): the DDU's OTA state
+// machine is transport-tagged, so wrap it with the WiFi transport.
+fn ota_begin_wifi(size: i32) {
+    ota::begin(usb::Transport::Wifi, size);
+}
+fn ota_feed_wifi(data: &[u8]) -> bool {
+    ota::feed(usb::Transport::Wifi, data)
+}
+fn ota_active() -> bool {
+    ota::ACTIVE.load(std::sync::atomic::Ordering::SeqCst)
 }

@@ -43,6 +43,13 @@ pub enum PedalId {
 /// other pith wire struct (the DDU's are 100% integer fields already, for
 /// what may well be the same reason).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+// Per-field fallback for JSON written by an older build: any field a saved
+// config predates is filled from `PedalConfig::default()` instead of failing
+// the whole parse. Without this, adding/renaming one field (e.g. the
+// `step_loss_detection` → `step_loss_recovery`/`crash_detection` split) makes
+// every stored profile un-deserializable — and the dashboard's whole-map
+// `from_str(..).unwrap_or_default()` then silently drops ALL saved profiles.
+#[serde(default)]
 pub struct PedalConfig {
     // ---- pedal start/end travel, in percent of full physical range ----
     pub pedal_start_pct: u8,
@@ -122,7 +129,10 @@ pub struct PedalConfig {
     pub spindle_pitch_mm_per_rev: u8,
 
     pub pedal_type: PedalId,
-    pub step_loss_detection: bool,
+    // The reference packs these two as bits 0/1 of `stepLossFunctionFlags_u8`
+    // (independent toggles in its "General" settings tab); kept as two bools.
+    pub step_loss_recovery: bool,
+    pub crash_detection: bool,
     pub servo_idle_timeout_s: u8,
     pub min_force_for_effects_n: u8,
     pub config_hash: u32,
@@ -145,6 +155,15 @@ pub struct PedalConfig {
 pub struct CustomVibration {
     pub amplitude: u8,
     pub frequency_hz: u8,
+}
+
+impl Default for PedalConfig {
+    /// Only used as serde's per-field fallback (see `#[serde(default)]` above)
+    /// when loading a config written before a field existed. The pedal id is a
+    /// placeholder — real stored configs always carry their own `pedal_type`.
+    fn default() -> Self {
+        Self::defaults(PedalId::Brake)
+    }
 }
 
 impl PedalConfig {
@@ -197,13 +216,14 @@ impl PedalConfig {
             kf_joystick_enabled: false,
             kf_joystick_model_noise: 10,
             debug_flags: 0,
-            loadcell_rating_kg: 100,
+            loadcell_rating_kg: 50, // DYLY-107 mini S-type, the cell on this build
             travel_as_joystick_output: false,
             invert_loadcell: false,
             invert_motor_direction: false,
             spindle_pitch_mm_per_rev: 4,
             pedal_type,
-            step_loss_detection: true,
+            step_loss_recovery: true,
+            crash_detection: true,
             servo_idle_timeout_s: 30,
             min_force_for_effects_n: 5,
             config_hash: 0,
@@ -224,14 +244,35 @@ impl PedalConfig {
 /// magnitude byte (0..255) per effect, scaled against the corresponding
 /// `PedalConfig` amplitude/frequency by the FIRMWARE's oscillator (the
 /// waveform generator stays on-device; see docs/pedals.md §1).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PedalAction {
     pub trigger_abs: bool,
-    pub rpm_pct: u8,           // 0..255 = 0..100% of redline
-    pub g_value: u8,           // 0..255 = 0..configured G window
+    /// Track/surface condition, the side channel the reference smuggles
+    /// through `triggerAbs_u8 > 1` (`trackCondition = triggerAbs - 1`);
+    /// carried as its own field here. 0 = unknown/none.
+    pub track_condition: u8,
+    pub rpm_pct: u8, // 0..255 = 0..100% of redline
+    /// SIGNED around 128, exactly like the reference's `gValue_u8 - 128`:
+    /// 128 = 0 G, <128 braking/negative, >128 accelerating/positive. A
+    /// sender with no G data must send 128, not 0 (0 means hard braking).
+    pub g_value: u8,
     pub wheel_slip: u8,        // 0..255 = 0..100% slip ratio
     pub impact_value: u8,      // 0..255 = road/kerb impact magnitude
     pub trigger_cv: [bool; 4], // custom vibration slots 1-4
+}
+
+impl Default for PedalAction {
+    fn default() -> Self {
+        PedalAction {
+            trigger_abs: false,
+            track_condition: 0,
+            rpm_pct: 0,
+            g_value: 128, // 128-centered: this is "no G", 0 would be -max
+            wheel_slip: 0,
+            impact_value: 0,
+            trigger_cv: [false; 4],
+        }
+    }
 }
 
 /// Live device state (position/force/joystick output + health), the
@@ -259,9 +300,33 @@ mod tests {
     }
 
     #[test]
+    fn config_survives_older_format_missing_and_renamed_fields() {
+        // A config saved by a build that predates the
+        // `step_loss_detection` → `step_loss_recovery`/`crash_detection` split:
+        // it carries the OLD (now-removed) field and lacks both new ones. It
+        // must still deserialize (from field defaults), not error — otherwise
+        // the dashboard's whole-map `from_str(..).unwrap_or_default()` drops
+        // every saved profile at once.
+        let mut cfg = PedalConfig::defaults(PedalId::Brake);
+        cfg.max_force_n_x10 = 987; // a value we expect to survive the migration
+        let mut v = serde_json::to_value(&cfg).unwrap();
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("step_loss_recovery");
+        obj.remove("crash_detection");
+        obj.insert("step_loss_detection".into(), serde_json::json!(true));
+        let migrated: PedalConfig = serde_json::from_value(v).unwrap();
+        assert_eq!(migrated.max_force_n_x10, 987, "existing fields preserved");
+        // The renamed fields fall back to their defaults rather than failing.
+        let d = PedalConfig::defaults(PedalId::Brake);
+        assert_eq!(migrated.step_loss_recovery, d.step_loss_recovery);
+        assert_eq!(migrated.crash_detection, d.crash_detection);
+    }
+
+    #[test]
     fn action_round_trips_through_json() {
         let act = PedalAction {
             trigger_abs: true,
+            track_condition: 2,
             rpm_pct: 200,
             g_value: 40,
             wheel_slip: 12,

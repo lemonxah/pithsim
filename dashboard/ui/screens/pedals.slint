@@ -6,13 +6,54 @@
 // telemetry-driven engine (dashboard/src/pedals.rs), not SimHub.
 import { Theme } from "../theme.slint";
 import { Pedals } from "../models.slint";
-import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, Dot, AppSlider, FlipCombo } from "../widgets.slint";
+import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, Dot, AppSlider, FlipCombo, ToggleSwitch } from "../widgets.slint";
+import { ForceCurveEditor } from "../components/force_curve.slint";
 import { LineEdit } from "std-widgets.slint";
+
+// One segment of the pedal selector (SimHub's vertical Clutch/Brake/Throttle
+// tabs, horizontal here): accent underline for the active role, a small dot
+// when that role has a live device.
+component PedalTab inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+    in property <bool> device-on;
+    callback clicked();
+    width: 130px;
+    height: 40px;
+    background: ta.has-hover && !root.active ? Theme.elev : transparent;
+    border-radius: 6px;
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+        HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            VerticalLayout { alignment: center; Dot { tint: root.device-on ? Theme.green : Theme.text3; } }
+            Text {
+                text: root.label;
+                color: root.active ? Theme.text : Theme.text2;
+                font-family: Theme.display-font;
+                font-size: 16px;
+                font-weight: root.active ? 700 : 500;
+            }
+        }
+        Rectangle {
+            height: 3px;
+            width: 80px;
+            border-radius: 1.5px;
+            background: root.active ? Theme.accent : transparent;
+        }
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
 
 component GainRow inherits VerticalLayout {
     in property <string> label;
     in property <string> unit: "";
     in property <int> value;
+    in property <int> minimum: 0;
     in property <int> maximum: 100;
     callback changed(int);
     spacing: 4px;
@@ -21,10 +62,61 @@ component GainRow inherits VerticalLayout {
         Mono { text: "\{root.value}" + root.unit; font-size: 13px; vertical-alignment: center; }
     }
     AppSlider {
-        minimum: 0;
+        minimum: root.minimum;
         maximum: root.maximum;
         value: root.value;
         changed(v) => { root.changed(Math.round(v)); }
+    }
+}
+
+// A segmented single-choice selector (binding-safe: it only ever displays the
+// bound `index` and emits `pick` — never self-assigns, so it keeps following
+// the config after a refresh/profile-load, unlike a self-mutating combo).
+component SegChoice inherits HorizontalLayout {
+    in property <string> label;
+    in property <[string]> options;
+    in property <int> index;
+    callback pick(int);
+    spacing: 10px;
+    Text { text: root.label; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+    HorizontalLayout {
+        spacing: 4px;
+        for opt[i] in root.options: Rectangle {
+            width: t.preferred-width + 18px;
+            height: 26px;
+            border-radius: 5px;
+            background: i == root.index ? Theme.accent-dim : (ta.has-hover ? Theme.elev : Theme.panel2);
+            border-width: 1px;
+            border-color: i == root.index ? Theme.accent : Theme.line2;
+            t := Text {
+                text: opt;
+                color: i == root.index ? Theme.accent : Theme.text2;
+                font-size: 12px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+            }
+            ta := TouchArea { clicked => { root.pick(i); } }
+        }
+    }
+}
+
+// Label (+ optional sub-line) with a trailing toggle.
+component ToggleRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> sub: "";
+    in property <bool> on;
+    callback toggled(bool);
+    spacing: 10px;
+    VerticalLayout {
+        horizontal-stretch: 1;
+        alignment: center;
+        spacing: 2px;
+        Text { text: root.label; color: Theme.text; font-size: 13px; }
+        if root.sub != "": Text { text: root.sub; color: Theme.text3; font-size: 11px; wrap: word-wrap; }
+    }
+    VerticalLayout {
+        alignment: center;
+        ToggleSwitch { on: root.on; toggled(v) => { root.toggled(v); } }
     }
 }
 
@@ -52,6 +144,31 @@ export component PedalsScreen inherits Rectangle {
                         font-size: 11px;
                     }
                 }
+            }
+
+            // Which pedal the editor below is configuring (per-role configs;
+            // pushing sends the selected role's config with its pedal_type).
+            HorizontalLayout {
+                spacing: 8px;
+                PedalTab {
+                    label: "CLUTCH";
+                    active: Pedals.selected-pedal == 0;
+                    device-on: Pedals.pedal-connected[0];
+                    clicked => { Pedals.select-pedal(0); }
+                }
+                PedalTab {
+                    label: "BRAKE";
+                    active: Pedals.selected-pedal == 1;
+                    device-on: Pedals.pedal-connected[1];
+                    clicked => { Pedals.select-pedal(1); }
+                }
+                PedalTab {
+                    label: "THROTTLE";
+                    active: Pedals.selected-pedal == 2;
+                    device-on: Pedals.pedal-connected[2];
+                    clicked => { Pedals.select-pedal(2); }
+                }
+                Rectangle { }
             }
 
             if !Pedals.connected: Card {
@@ -103,50 +220,312 @@ export component PedalsScreen inherits Rectangle {
                         GhostButton { text: "SAVE"; clicked => { Pedals.save-profile-requested(name-edit.text); } }
                         Rectangle { }
                     }
-                    if Pedals.profiles.length > 0: HorizontalLayout {
+                    if Pedals.profiles.length > 0: VerticalLayout {
                         spacing: 10px;
-                        combo := FlipCombo { width: 200px; model: Pedals.profiles; current-index: 0; }
-                        GhostButton { text: "LOAD"; clicked => { Pedals.load-profile-requested(combo.current-value); } }
-                        GhostButton { text: "DELETE"; clicked => { Pedals.delete-profile-requested(combo.current-value); } }
-                        Rectangle { }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            combo := FlipCombo {
+                                width: 200px;
+                                model: Pedals.profiles;
+                                current-index: 0;
+                                // Show the selected profile's binding in the field.
+                                changed current-value => { Pedals.profile-bind = Pedals.load-binding(self.current-value); }
+                            }
+                            GhostButton { text: "LOAD"; clicked => { Pedals.load-profile-requested(combo.current-value); } }
+                            GhostButton { text: "DELETE"; clicked => { Pedals.delete-profile-requested(combo.current-value); } }
+                            Rectangle { }
+                        }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            bind-edit := LineEdit {
+                                width: 300px;
+                                text: Pedals.profile-bind;
+                                placeholder-text: "game/car keys for \"\{combo.current-value}\" (e.g. iracing, mx5)";
+                                edited(t) => { Pedals.profile-bind = t; }
+                            }
+                            GhostButton {
+                                text: "SET BINDING";
+                                clicked => { Pedals.save-binding(combo.current-value, bind-edit.text); }
+                            }
+                            Rectangle { }
+                        }
                     }
                     if Pedals.profiles.length == 0: Text { text: "No saved profiles yet."; color: Theme.text3; font-size: 12px; }
+
+                    // ---- auto-switch ----
+                    Rectangle { height: 1px; background: Theme.line; }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            ToggleSwitch {
+                                on: Pedals.auto-switch;
+                                toggled(v) => {
+                                    Pedals.auto-switch = v;
+                                    Pedals.set-auto-switch(v);
+                                }
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text { text: "Auto-switch profiles by game / car"; color: Theme.text; font-size: 13px; }
+                            Text {
+                                text: "When on, the matching profile is applied to the device automatically as the running game or car changes.";
+                                color: Theme.text3;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
                 }
             }
 
             Card {
                 VerticalLayout {
                     padding: 20px;
-                    spacing: 16px;
-                    SectionLabel { text: "EFFECT GAINS"; }
+                    spacing: 12px;
+                    ForceCurveEditor { }
+                }
+            }
+
+            // ---- axis output ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    SectionLabel { text: "AXIS OUTPUT"; }
+                    GainRow { label: "Max game output"; unit: "%"; value: Pedals.max-game-output-pct; maximum: 100; changed(v) => { Pedals.max-game-output-pct = v; } }
+                    SegChoice { label: "Joystick axis source"; options: ["Force", "Travel"]; index: Pedals.axis-source; pick(i) => { Pedals.axis-source = i; } }
+                }
+            }
+
+            // ---- effects (full parameter set, per reference effect tab) ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 14px;
+                    SectionLabel { text: "EFFECTS"; }
                     Text {
-                        text: "Same effects as the reference project's SimHub plugin, driven by pith's own telemetry instead.";
+                        text: "Effects come from live game telemetry (not SimHub). Only the ones that make sense for the selected pedal are shown — switch pedal above to see its set. Amplitude 0 disables an effect.";
                         color: Theme.text3;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
-                    GainRow { label: "ABS pulsation frequency"; unit: " Hz"; value: Pedals.abs-frequency-hz; maximum: 50; changed(v) => { Pedals.abs-frequency-hz = v; } }
-                    GainRow { label: "ABS pulsation amplitude"; value: Pedals.abs-amplitude; changed(v) => { Pedals.abs-amplitude = v; } }
-                    GainRow { label: "RPM vibration"; value: Pedals.rpm-amplitude-kg; changed(v) => { Pedals.rpm-amplitude-kg = v; } }
-                    GainRow { label: "G-force / weight transfer"; unit: "%"; value: Pedals.g-multiplier; changed(v) => { Pedals.g-multiplier = v; } }
-                    GainRow { label: "Wheel slip"; value: Pedals.wheel-slip-amplitude; changed(v) => { Pedals.wheel-slip-amplitude = v; } }
-                    GainRow { label: "Road / kerb impact"; unit: "%"; value: Pedals.road-impact-multiplier; changed(v) => { Pedals.road-impact-multiplier = v; } }
+
+                    // ABS / TC — braking anti-lock pulsation → brake only.
+                    if Pedals.selected-pedal == 1: VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "ABS / TC"; color: Theme.accent; font-size: 12px; font-weight: 700; }
+                        GainRow { label: "Amplitude"; value: Pedals.abs-amplitude; changed(v) => { Pedals.abs-amplitude = v; } }
+                        GainRow { label: "Frequency"; unit: " Hz"; value: Pedals.abs-frequency-hz; maximum: 100; changed(v) => { Pedals.abs-frequency-hz = v; } }
+                        SegChoice { label: "Waveform"; options: ["Sine", "Sawtooth"]; index: Pedals.abs-waveform; pick(i) => { Pedals.abs-waveform = i; } }
+                        SegChoice { label: "Apply by"; options: ["Force", "Travel"]; index: Pedals.abs-apply-by; pick(i) => { Pedals.abs-apply-by = i; } }
+                        ToggleRow { label: "Simulate ABS (bench test)"; on: Pedals.simulate-abs; toggled(v) => { Pedals.simulate-abs = v; } }
+                        GainRow { label: "Simulate level"; value: Pedals.simulate-abs-value; maximum: 255; changed(v) => { Pedals.simulate-abs-value = v; } }
+                    }
+
+                    // Engine/speed (RPM) buzz — shift feel (throttle) / engine at the
+                    // bite (clutch), not braking → hide on brake.
+                    if Pedals.selected-pedal != 1: VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "ENGINE / SPEED (RPM)"; color: Theme.accent; font-size: 12px; font-weight: 700; }
+                        GainRow { label: "Amplitude"; value: Pedals.rpm-amplitude-kg; changed(v) => { Pedals.rpm-amplitude-kg = v; } }
+                        GainRow { label: "Min frequency"; unit: " Hz"; value: Pedals.rpm-min-freq-hz; maximum: 255; changed(v) => { Pedals.rpm-min-freq-hz = v; } }
+                        GainRow { label: "Max frequency"; unit: " Hz"; value: Pedals.rpm-max-freq-hz; maximum: 255; changed(v) => { Pedals.rpm-max-freq-hz = v; } }
+                    }
+
+                    // Bite point — clutch engagement only.
+                    if Pedals.selected-pedal == 0: VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "BITE POINT"; color: Theme.accent; font-size: 12px; font-weight: 700; }
+                        ToggleRow { label: "Enabled"; on: Pedals.bite-point-enabled; toggled(v) => { Pedals.bite-point-enabled = v; } }
+                        GainRow { label: "Trigger position"; unit: "%"; value: Pedals.bite-point-trigger-pct; maximum: 100; changed(v) => { Pedals.bite-point-trigger-pct = v; } }
+                        GainRow { label: "Amplitude"; value: Pedals.bite-point-amplitude; maximum: 255; changed(v) => { Pedals.bite-point-amplitude = v; } }
+                        GainRow { label: "Frequency"; unit: " Hz"; value: Pedals.bite-point-freq-hz; maximum: 255; changed(v) => { Pedals.bite-point-freq-hz = v; } }
+                    }
+
+                    // G-force / weight transfer — longitudinal load under brake &
+                    // throttle, not a clutch effect.
+                    if Pedals.selected-pedal != 0: VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "G-FORCE / WEIGHT TRANSFER"; color: Theme.accent; font-size: 12px; font-weight: 700; }
+                        GainRow { label: "Multiplier"; unit: "%"; value: Pedals.g-multiplier; maximum: 255; changed(v) => { Pedals.g-multiplier = v; } }
+                        GainRow { label: "Smoothing window"; value: Pedals.g-window; maximum: 255; changed(v) => { Pedals.g-window = v; } }
+                    }
+
+                    // Wheel slip — lockup (brake) & wheelspin (throttle), not clutch.
+                    if Pedals.selected-pedal != 0: VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "WHEEL SLIP"; color: Theme.accent; font-size: 12px; font-weight: 700; }
+                        GainRow { label: "Amplitude"; value: Pedals.wheel-slip-amplitude; changed(v) => { Pedals.wheel-slip-amplitude = v; } }
+                        GainRow { label: "Frequency"; unit: " Hz"; value: Pedals.wheel-slip-freq-hz; maximum: 255; changed(v) => { Pedals.wheel-slip-freq-hz = v; } }
+                    }
+
+                    // Road / kerb impact + custom slots apply to every pedal.
+                    VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "ROAD / KERB IMPACT"; color: Theme.accent; font-size: 12px; font-weight: 700; }
+                        GainRow { label: "Multiplier"; unit: "%"; value: Pedals.road-impact-multiplier; maximum: 255; changed(v) => { Pedals.road-impact-multiplier = v; } }
+                        GainRow { label: "Window"; value: Pedals.road-impact-window; maximum: 255; changed(v) => { Pedals.road-impact-window = v; } }
+                    }
+
+                    VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "CUSTOM VIBRATION SLOTS"; color: Theme.accent; font-size: 12px; font-weight: 700; }
+                        GainRow { label: "Slot 1 amplitude"; unit: "%"; value: Pedals.custom-amp-1; changed(v) => { Pedals.custom-amp-1 = v; } }
+                        GainRow { label: "Slot 1 frequency"; unit: " Hz"; value: Pedals.custom-freq-1; maximum: 255; changed(v) => { Pedals.custom-freq-1 = v; } }
+                        GainRow { label: "Slot 2 amplitude"; unit: "%"; value: Pedals.custom-amp-2; changed(v) => { Pedals.custom-amp-2 = v; } }
+                        GainRow { label: "Slot 2 frequency"; unit: " Hz"; value: Pedals.custom-freq-2; maximum: 255; changed(v) => { Pedals.custom-freq-2 = v; } }
+                        GainRow { label: "Slot 3 amplitude"; unit: "%"; value: Pedals.custom-amp-3; changed(v) => { Pedals.custom-amp-3 = v; } }
+                        GainRow { label: "Slot 3 frequency"; unit: " Hz"; value: Pedals.custom-freq-3; maximum: 255; changed(v) => { Pedals.custom-freq-3 = v; } }
+                        GainRow { label: "Slot 4 amplitude"; unit: "%"; value: Pedals.custom-amp-4; changed(v) => { Pedals.custom-amp-4 = v; } }
+                        GainRow { label: "Slot 4 frequency"; unit: " Hz"; value: Pedals.custom-freq-4; maximum: 255; changed(v) => { Pedals.custom-freq-4 = v; } }
+                    }
                 }
             }
 
+            // ---- pedal dynamics (admittance model) ----
             Card {
                 VerticalLayout {
                     padding: 20px;
-                    spacing: 16px;
-                    SectionLabel { text: "FEEL (PHASE 2 — no actuator yet)"; }
+                    spacing: 12px;
+                    SectionLabel { text: "PEDAL DYNAMICS (PHASE 2 — no actuator yet)"; }
                     Text {
                         text: "These tune the admittance model once a motor driver exists (docs/pedals.md). Safe to set now; they only take effect once Phase 2 firmware reads them.";
                         color: Theme.text3;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
-                    GainRow { label: "Virtual mass"; unit: "%"; value: Pedals.virtual-mass-pct; changed(v) => { Pedals.virtual-mass-pct = v; } }
-                    GainRow { label: "Virtual damping"; unit: "%"; value: Pedals.virtual-damping-pct; changed(v) => { Pedals.virtual-damping-pct = v; } }
+                    GainRow { label: "Virtual mass"; unit: "%"; value: Pedals.virtual-mass-pct; maximum: 255; changed(v) => { Pedals.virtual-mass-pct = v; } }
+                    GainRow { label: "Virtual damping (zeta)"; unit: "%"; value: Pedals.virtual-damping-pct; maximum: 255; changed(v) => { Pedals.virtual-damping-pct = v; } }
+                    GainRow { label: "Damping progression"; unit: "%"; value: Pedals.damping-progression-pct; maximum: 255; changed(v) => { Pedals.damping-progression-pct = v; } }
+                    GainRow { label: "Coulomb friction"; unit: " ×0.1N"; value: Pedals.coulomb-friction-0p1n; maximum: 255; changed(v) => { Pedals.coulomb-friction-0p1n = v; } }
+                    GainRow { label: "Endstop travel"; unit: " mm"; value: Pedals.endstop-travel-mm; maximum: 50; changed(v) => { Pedals.endstop-travel-mm = v; } }
+                    GainRow { label: "Endstop stiffness"; unit: " kg/mm"; value: Pedals.endstop-stiffness-kg-mm; maximum: 255; changed(v) => { Pedals.endstop-stiffness-kg-mm = v; } }
+                }
+            }
+
+            // ---- pedal geometry / kinematics ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    SectionLabel { text: "PEDAL GEOMETRY (KINEMATICS)"; }
+                    Text {
+                        text: "Linkage lengths for the lever-force correction (the reference's a/b/c/d model). Only matter once the actuator is wired.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    GainRow { label: "Length A"; unit: " mm"; value: Pedals.length-a-mm; maximum: 400; changed(v) => { Pedals.length-a-mm = v; } }
+                    GainRow { label: "Length B"; unit: " mm"; value: Pedals.length-b-mm; maximum: 400; changed(v) => { Pedals.length-b-mm = v; } }
+                    GainRow { label: "Length D"; unit: " mm"; value: Pedals.length-d-mm; maximum: 400; changed(v) => { Pedals.length-d-mm = v; } }
+                    GainRow { label: "Length C (horizontal)"; unit: " mm"; value: Pedals.length-c-horizontal-mm; maximum: 400; changed(v) => { Pedals.length-c-horizontal-mm = v; } }
+                    GainRow { label: "Length C (vertical)"; unit: " mm"; value: Pedals.length-c-vertical-mm; maximum: 400; changed(v) => { Pedals.length-c-vertical-mm = v; } }
+                    GainRow { label: "Travel length"; unit: " mm"; value: Pedals.length-travel-mm; maximum: 400; changed(v) => { Pedals.length-travel-mm = v; } }
+                }
+            }
+
+            // ---- calibration / servo / general ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    SectionLabel { text: "CALIBRATION & SERVO"; }
+                    GainRow { label: "Loadcell rating"; unit: " kg"; value: Pedals.loadcell-rating-kg; minimum: 1; maximum: 200; changed(v) => { Pedals.loadcell-rating-kg = v; } }
+                    ToggleRow { label: "Invert loadcell"; on: Pedals.invert-loadcell; toggled(v) => { Pedals.invert-loadcell = v; } }
+                    ToggleRow { label: "Invert motor direction"; on: Pedals.invert-motor-direction; toggled(v) => { Pedals.invert-motor-direction = v; } }
+                    GainRow { label: "Spindle pitch"; unit: " mm/rev"; value: Pedals.spindle-pitch-mm; minimum: 1; maximum: 50; changed(v) => { Pedals.spindle-pitch-mm = v; } }
+                    GainRow { label: "Servo idle timeout"; unit: " s"; value: Pedals.servo-idle-timeout-s; maximum: 255; changed(v) => { Pedals.servo-idle-timeout-s = v; } }
+                    GainRow { label: "Endstop detection threshold"; value: Pedals.endstop-detection-threshold; maximum: 255; changed(v) => { Pedals.endstop-detection-threshold = v; } }
+                    GainRow { label: "Min force for effects"; unit: " N"; value: Pedals.min-force-for-effects-n; maximum: 255; changed(v) => { Pedals.min-force-for-effects-n = v; } }
+                    ToggleRow { label: "Step-loss recovery"; on: Pedals.step-loss-recovery; toggled(v) => { Pedals.step-loss-recovery = v; } }
+                    ToggleRow { label: "Crash detection"; on: Pedals.crash-detection; toggled(v) => { Pedals.crash-detection = v; } }
+                    GainRow { label: "Debug flag"; value: Pedals.debug-flags; maximum: 255; changed(v) => { Pedals.debug-flags = v; } }
+                }
+            }
+
+            // ---- signal filter ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    SectionLabel { text: "SIGNAL FILTER"; }
+                    SegChoice {
+                        label: "Force filter model";
+                        options: ["Const-velocity KF", "Const-accel KF", "Exponential", "Raw"];
+                        index: Pedals.kf-force-model-order;
+                        pick(i) => { Pedals.kf-force-model-order = i; }
+                    }
+                    GainRow { label: "Force filter noise"; value: Pedals.kf-force-model-noise; maximum: 255; changed(v) => { Pedals.kf-force-model-noise = v; } }
+                    ToggleRow { label: "Joystick output smoothing"; on: Pedals.kf-joystick-enabled; toggled(v) => { Pedals.kf-joystick-enabled = v; } }
+                    GainRow { label: "Joystick filter noise"; value: Pedals.kf-joystick-model-noise; maximum: 255; changed(v) => { Pedals.kf-joystick-model-noise = v; } }
+                }
+            }
+
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    SectionLabel { text: "WIRELESS"; }
+                    Text {
+                        text: "Run the pedal over WiFi instead of USB. Provision the pedal's network (while it's plugged in over USB), then enable WiFi input to feed a software virtual joystick the game reads — no cable needed for the axis.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    // provisioning
+                    HorizontalLayout {
+                        spacing: 10px;
+                        ssid-edit := LineEdit {
+                            width: 180px;
+                            text: Pedals.wifi-ssid;
+                            placeholder-text: "WiFi SSID";
+                            edited(t) => { Pedals.wifi-ssid = t; }
+                        }
+                        pass-edit := LineEdit {
+                            width: 180px;
+                            text: Pedals.wifi-pass;
+                            placeholder-text: "password";
+                            edited(t) => { Pedals.wifi-pass = t; }
+                        }
+                        GhostButton {
+                            text: "SEND TO PEDAL";
+                            clicked => { if (Pedals.connected) { Pedals.provision-wifi(ssid-edit.text, pass-edit.text); } }
+                        }
+                        Rectangle { }
+                    }
+
+                    // input-mode toggle
+                    HorizontalLayout {
+                        spacing: 10px;
+                        VerticalLayout {
+                            alignment: center;
+                            ToggleSwitch {
+                                on: Pedals.wifi-input-enabled;
+                                toggled(v) => {
+                                    Pedals.wifi-input-enabled = v;
+                                    Pedals.set-wifi-input(v);
+                                }
+                            }
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text { text: "WiFi input mode (virtual joystick)"; color: Theme.text; font-size: 13px; }
+                            Text {
+                                text: "Off = the device's own USB HID axis (default). On = a wireless device's axis feeds a virtual joystick.";
+                                color: Theme.text3;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+
+                    // discovered devices
+                    Text { text: "Discovered wireless devices"; color: Theme.text3; font-size: 11px; }
+                    if Pedals.wifi-devices.length == 0: Text { text: "None found on the network yet."; color: Theme.text3; font-size: 12px; }
+                    for dev in Pedals.wifi-devices: Mono { text: dev; font-size: 12px; }
                 }
             }
 

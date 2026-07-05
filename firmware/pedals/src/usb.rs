@@ -81,8 +81,9 @@ pub extern "C" fn pith_on_hid_tx_complete() {
 static HID_LINE: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
 /// Drain HID-OUT bytes buffered by the callback and process them on the main
-/// task (big stack). Call every main-loop iteration.
-pub fn poll_hid(rt: &mut Runtime) {
+/// task (big stack). Call every main-loop iteration. `wifi` carries the
+/// shared WiFi state so `@WIFI` provisioning works over USB.
+pub fn poll_hid(rt: &mut Runtime, wifi: &crate::wifi::WifiShared) {
     let bytes = {
         let mut b = HID_RX.lock().unwrap();
         if b.is_empty() {
@@ -90,10 +91,10 @@ pub fn poll_hid(rt: &mut Runtime) {
         }
         std::mem::take(&mut *b)
     };
-    feed(&bytes, rt);
+    feed(&bytes, rt, wifi);
 }
 
-fn feed(bytes: &[u8], rt: &mut Runtime) {
+fn feed(bytes: &[u8], rt: &mut Runtime, wifi: &crate::wifi::WifiShared) {
     // Mid-OTA the channel carries the raw image, not text — hand every byte
     // to the OTA writer and skip line accumulation.
     if crate::ota::feed(bytes) {
@@ -124,12 +125,14 @@ fn feed(bytes: &[u8], rt: &mut Runtime) {
             crate::ota::begin(rest.trim().parse().unwrap_or(0));
             continue;
         }
-        let reply = dispatch(&line, rt);
+        let reply = handle_command(&line, rt, wifi);
         write_line(&reply);
     }
 }
 
-fn dispatch(line: &str, rt: &mut Runtime) -> String {
+/// Dispatch one `@`-command line. Shared by the USB channel (above) and the
+/// WiFi transport (drained in `main`), so both speak the identical protocol.
+pub fn handle_command(line: &str, rt: &mut Runtime, wifi: &crate::wifi::WifiShared) -> String {
     let line = line.trim();
     if line == "?" {
         return status_line(rt);
@@ -150,7 +153,7 @@ fn dispatch(line: &str, rt: &mut Runtime) -> String {
     if let Some(json) = line.strip_prefix("@CFG") {
         return match serde_json::from_str::<PedalConfig>(json) {
             Ok(cfg) => {
-                rt.config = cfg;
+                rt.apply_config(cfg);
                 "OK\n".to_string()
             }
             Err(_) => "ERR parse\n".to_string(),
@@ -159,13 +162,61 @@ fn dispatch(line: &str, rt: &mut Runtime) -> String {
     if let Some(json) = line.strip_prefix("@ACT") {
         return match serde_json::from_str::<PedalAction>(json) {
             Ok(action) => {
-                rt.action = action;
+                rt.apply_action(action, now_ms());
                 "OK\n".to_string()
             }
             Err(_) => "ERR parse\n".to_string(),
         };
     }
+    // Arm/disarm the motor output. Arming is gated on the pedal being homed
+    // (main sets `homed` after the endstop sweep) — the actual motor drive is
+    // still refused by the servo driver until its own bench validation
+    // passes. Disarm always works (it's the safe direction).
+    if line == "@ARM" {
+        if !rt.homed {
+            return "ERR not homed\n".to_string();
+        }
+        rt.armed = true;
+        return "OK armed\n".to_string();
+    }
+    if line == "@DISARM" {
+        rt.armed = false;
+        return "OK disarmed\n".to_string();
+    }
+    // Provision WiFi: `@WIFI <ssid> <password>`. Hands the credentials to the
+    // WiFi thread, which persists them to NVS and (re)connects — no reboot.
+    // The password may contain spaces (everything after the SSID token).
+    if let Some(rest) = line.strip_prefix("@WIFI") {
+        let rest = rest.trim();
+        if let Some((ssid, pass)) = rest.split_once(' ') {
+            *wifi.new_creds.lock().unwrap() = Some((ssid.to_string(), pass.to_string()));
+            return "OK wifi credentials saved\n".to_string();
+        }
+        return "ERR usage @WIFI ssid password\n".to_string();
+    }
+    // Set the homed travel envelope from a bench-measured endstop sweep:
+    // `@HOME <soft_min> <soft_max> <hard_min> <hard_max>` (absolute steps).
+    // Explicit values rather than an auto-sweep, since a sweep drives the
+    // motor into its endstops and must be operator-supervised.
+    if let Some(args) = line.strip_prefix("@HOME") {
+        let nums: Vec<i32> = args
+            .split_whitespace()
+            .filter_map(|t| t.parse().ok())
+            .collect();
+        if let [soft_min, soft_max, hard_min, hard_max] = nums[..] {
+            if soft_max > soft_min && hard_max > hard_min {
+                rt.home(soft_min, soft_max, hard_min, hard_max);
+                return "OK homed\n".to_string();
+            }
+        }
+        return "ERR usage @HOME min max hardmin hardmax\n".to_string();
+    }
     "ERR unknown\n".to_string()
+}
+
+/// Milliseconds since boot (esp_timer), for the effect oscillators' clock.
+fn now_ms() -> i64 {
+    (unsafe { sys::esp_timer_get_time() } / 1000) as i64
 }
 
 fn status_line(rt: &Runtime) -> String {

@@ -72,6 +72,25 @@ pub fn parse_rtcarinfo(b: &[u8]) -> Option<Telemetry> {
     t.abs_active = (le::u8(b, 21) != 0) as i32;
     t.tc_active = (le::u8(b, 22) != 0) as i32;
     t.ignition = 1; // engine running while telemetry streams
+                    // Chassis G-forces (g units) — RTCarInfo accG @28 vertical / @32 horizontal
+                    // (lateral) / @36 frontal (longitudinal). Offsets verified against the
+                    // public RTCarInfo layout (e.g. rickwest/ac-remote-telemetry-client's
+                    // RTCarInfoParser), which also anchors speed@8, gas@56, gear@76 below.
+                    // g_lat from accG_horizontal, g_long from accG_frontal (+accel / −brake).
+    t.g_lat_x100 = (le::f32(b, 32) * 100.0).round() as i32; // accG_horizontal
+    t.g_long_x100 = (le::f32(b, 36) * 100.0).round() as i32; // accG_frontal
+                                                             // Per-wheel slip DOES exist here: after cgHeight@80 the packet runs
+                                                             // wheelAngularSpeed[4]@84, slipAngle[4]@100, slipAngle_ContactPatch[4]
+                                                             // @116, slipRatio[4]@132, tyreSlip[4]@148, ndSlip[4]@164 (same public
+                                                             // layout as above). wheel_slip = max |slipRatio| ×100, order FL,FR,RL,RR.
+    t.wheel_slip = crate::ffb::slip_from_ratios([
+        le::f32(b, 132),
+        le::f32(b, 136),
+        le::f32(b, 140),
+        le::f32(b, 144),
+    ]);
+    // suspensionHeight[4] @292 is a POSITION — RTCarInfo has no per-wheel
+    // suspension-velocity channel, so susp_impact stays 0 (no offsets guessed).
     Some(t)
 }
 
@@ -104,6 +123,22 @@ mod tests {
         assert_eq!(parse_rtcarinfo(&b).unwrap().gear, b'R');
         b[76..80].copy_from_slice(&1i32.to_le_bytes());
         assert_eq!(parse_rtcarinfo(&b).unwrap().gear, b'N');
+    }
+
+    /// wheel_slip comes from slipRatio[4]@132 (max |ratio| ×100); accG@32/36
+    /// feed the g channels; susp_impact has no source in RTCarInfo.
+    #[test]
+    fn slip_and_g_forces() {
+        let mut b = rtcarinfo();
+        b[32..36].copy_from_slice(&1.2f32.to_le_bytes()); // accG_horizontal
+        b[36..40].copy_from_slice(&(-0.8f32).to_le_bytes()); // accG_frontal (braking)
+        b[136..140].copy_from_slice(&(-0.35f32).to_le_bytes()); // slipRatio FR
+        b[140..144].copy_from_slice(&0.15f32.to_le_bytes()); // slipRatio RL
+        let t = parse_rtcarinfo(&b).unwrap();
+        assert_eq!(t.g_lat_x100, 120);
+        assert_eq!(t.g_long_x100, -80);
+        assert_eq!(t.wheel_slip, 35); // max |slipRatio|
+        assert_eq!(t.susp_impact, 0);
     }
 
     #[test]

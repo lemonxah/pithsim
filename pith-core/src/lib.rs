@@ -7,6 +7,7 @@
 
 pub mod format;
 pub mod le;
+pub mod net;
 pub mod relatives;
 pub mod shift;
 pub mod simhub;
@@ -123,9 +124,14 @@ mod tests {
         assert_eq!(field_id_from_str("tc_slip"), 85);
         assert_eq!(field_id_from_str("virtual_energy"), 87);
         assert_eq!(field_id_from_str("fuel_is_ve"), 89);
+        // Chassis G-forces + grip diagnostics appended after fuel_is_ve.
+        assert_eq!(field_id_from_str("g_long_x100"), 90);
+        assert_eq!(field_id_from_str("g_lat_x100"), 91);
+        assert_eq!(field_id_from_str("wheel_slip"), 92);
+        assert_eq!(field_id_from_str("susp_impact"), 93);
         assert_eq!(field_id_from_str("nope"), 0);
-        assert_eq!(FIELDS.len(), 89);
-        assert_eq!(FIELD_COUNT, 90);
+        assert_eq!(FIELDS.len(), 93);
+        assert_eq!(FIELD_COUNT, 94);
     }
 
     #[test]

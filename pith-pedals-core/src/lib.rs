@@ -6,6 +6,13 @@
 //! (JSON over the `@`-command channel, like the DDU) rather than that
 //! project's byte-packed/checksummed framing.
 
+pub mod admittance;
+pub mod controller;
 pub mod curve;
 pub mod effects;
+pub mod filter;
+pub mod kinematics;
+pub mod loadcell;
+pub mod modbus;
 pub mod protocol;
+pub mod servo_jss57p;

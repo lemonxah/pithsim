@@ -42,6 +42,9 @@ pub struct Ctx {
     /// condvar wakeup needed since the loop already polls at ~50 Hz for
     /// the effects engine).
     pub pedals_out: Arc<Mutex<Option<crate::pedals::PedalsOutbound>>>,
+    /// FIFO outbox for the WiFi transport thread (see [`crate::wifi`]):
+    /// command lines / OTA pushes addressed to a wireless device by serial.
+    pub wifi_out: Arc<Mutex<Vec<crate::wifi::WifiOut>>>,
 }
 
 impl Ctx {
@@ -76,6 +79,11 @@ impl Ctx {
     /// Queue a command for the pedal device thread (latest wins).
     pub fn send_pedals(&self, cmd: crate::pedals::PedalsOutbound) {
         *self.pedals_out.lock().unwrap() = Some(cmd);
+    }
+
+    /// Queue a line/OTA for a wireless device (drained by the WiFi thread).
+    pub fn send_wifi(&self, out: crate::wifi::WifiOut) {
+        self.wifi_out.lock().unwrap().push(out);
     }
 
     pub fn ui_run<F: FnOnce(AppWindow) + Send + 'static>(&self, f: F) {

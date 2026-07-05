@@ -31,6 +31,26 @@ pub fn parse_ac_physics(b: &[u8]) -> Option<Telemetry> {
 
     // ---- common region (≤252): valid for both original AC and ACC ----
     if b.len() >= 256 {
+        // Chassis G-forces. accG[3] @44 is in g units (AC SPageFilePhysics
+        // convention): accG[0]=x lateral, accG[1]=y vertical, accG[2]=z
+        // longitudinal. Offset re-verified against the public SPageFilePhysics
+        // mirrors (e.g. mdjarv/assettocorsasharedmemory Physics.cs): packetId@0,
+        // gas@4 … speedKmh@28, velocity[3]@32, accG[3]@44, wheelSlip[4]@56 — and
+        // the axis roles (x lat / y vert / z long, z +accel) match how public
+        // consumers (e.g. SecondMonitor's AC connector) map the same field.
+        // g_long from accG[2] (+accel / −brake), g_lat from accG[0].
+        t.g_lat_x100 = (le::f32(b, 44) * 100.0).round() as i32; // accG[0] (x, lateral)
+        t.g_long_x100 = (le::f32(b, 52) * 100.0).round() as i32; // accG[2] (z, longitudinal)
+                                                                 // wheelSlip[4] @56 (FL,FR,RL,RR), magnitude → max ×100 (clamped 0..10000).
+        t.wheel_slip = crate::ffb::slip_from_ratios([
+            le::f32(b, 56),
+            le::f32(b, 60),
+            le::f32(b, 64),
+            le::f32(b, 68),
+        ]);
+        // suspensionTravel[4] @184 is a POSITION (travel), not a velocity, and the
+        // AC/ACC physics page has no per-wheel suspension-velocity channel, so
+        // susp_impact is left 0 here.
         // wheelsPressure[4] @88 is in PSI (per the official shared-memory doc;
         // ~27 in game) — convert to kPa so `tp_*` keeps one unit across sims
         // (the rF2 path stores 0.1 kPa). tyreCoreTemperature[4] @152 (°C).
@@ -548,6 +568,34 @@ pub fn parse_r3e(b: &[u8]) -> Option<Telemetry> {
     t.cur_lap_ms = lap_ms(1100);
     t.best_lap_ms = lap_ms(1068);
     t.last_lap_ms = lap_ms(1084);
+    // Chassis G-forces from the vehicle-state `local_acceleration` (vec3 f32
+    // @1440, m/s²). r3e.h documents the frame on the field itself: "From car
+    // center, +X=left, +Y=up, +Z=back" — negate both so g_long is +accel/−brake
+    // and g_lat is positive-right (Forza's documented convention). Offsets
+    // verified by walking the packed r3e.h layout between the anchors this
+    // parser already uses: control_type@1388, car_speed@1392 … gear@1408,
+    // num_gears@1412, car_cg_location@1416, car_orientation@1428,
+    // local_acceleration@1440, total_mass@1452, fuel_left@1456.
+    let (ax, az) = (le::f32(b, 1440), le::f32(b, 1448));
+    if ax.is_finite() && az.is_finite() {
+        t.g_lat_x100 = (-ax / 9.81 * 100.0).round() as i32;
+        t.g_long_x100 = (-az / 9.81 * 100.0).round() as i32;
+    }
+    // susp_impact from `player.suspension_velocity[4]` (f64 @424, m/s — r3e.h:
+    // "Car setup (radians, meters, meters per second)"; playerdata starts @40:
+    // user_id, ticks, sim_time@48, then 12 vec3_f64 blocks + 9 f64 through
+    // torque_mgu_k@384, suspension_deflection[4]@392, suspension_velocity[4]
+    // @424). Peak |v| → 0..1000 against the 2.0 m/s hard-impact cap the
+    // Codemasters decoder documents.
+    t.susp_impact = crate::ffb::susp_impact_from_velocity(
+        [
+            le::f64(b, 424) as f32,
+            le::f64(b, 432) as f32,
+            le::f64(b, 440) as f32,
+            le::f64(b, 448) as f32,
+        ],
+        crate::ffb::SUSP_V_CAP_HARD_BOTTOM_OUT,
+    );
     // Extra car state (later in the struct).
     if b.len() >= 1624 {
         t.water_c = le::f32(b, 1480).round() as i32; // engine_temp
@@ -562,6 +610,23 @@ pub fn parse_r3e(b: &[u8]) -> Option<Telemetry> {
         t.tc = if tc_aid == 5 { 1 } else { tc_aid.max(0) };
         t.abs_active = (abs_aid == 5) as i32;
         t.tc_active = (tc_aid == 5) as i32;
+    }
+    // Wheel slip from `tire_speed[4]` (f32 @1648, m/s — r3e.h "Wheel speed";
+    // tyre section runs steer_wheel_max_rotation@1624, tire_type@1628,
+    // tire_rps[4]@1632, tire_speed[4]@1648, tire_grip[4]@1664) vs car_speed
+    // @1392: slip = |wheel − body| / max(body, 1), max over wheels ×100 — the
+    // Codemasters decoder's approximation, but subtracting the RAW body speed
+    // so a parked car (wheel 0, body 0) reads 0 slip, not |0−1|/1.
+    if b.len() >= 1664 {
+        t.wheel_slip = crate::ffb::body_relative_slip(
+            le::f32(b, 1392),
+            [
+                le::f32(b, 1648),
+                le::f32(b, 1652),
+                le::f32(b, 1656),
+                le::f32(b, 1660),
+            ],
+        );
     }
     Some(t)
 }
@@ -741,6 +806,32 @@ pub fn parse_rf2(telem: &[u8], scoring: &[u8]) -> Option<Telemetry> {
         *tw = (wh.wear_fraction() * 100.0).round().clamp(0.0, 100.0) as i32;
     }
 
+    // Chassis G-forces from mLocalAccel (m/s² → G ×100). ISI's local vehicle
+    // frame is documented in InternalsPlugin.hpp: "+x points out the left side
+    // of the car (from the driver's perspective) … +z points out the BACK of
+    // the car" — so raw z is POSITIVE under braking and raw x positive to the
+    // left (TinyPedal's force module likewise treats +longitudinal G as the
+    // braking rate). Negate both: g_long +accel/−brake per the field's
+    // contract, g_lat positive-right matching Forza's documented X=right.
+    // (Earlier code read +z as accel — that was inverted.)
+    let (ax, _ay, az) = v.local_accel();
+    if ax.is_finite() && az.is_finite() {
+        t.g_lat_x100 = (-ax / 9.81 * 100.0).round() as i32;
+        t.g_long_x100 = (-az / 9.81 * 100.0).round() as i32;
+    }
+    // Wheel slip: rF2 exposes grip fraction (mGripFract, 0..1), not a slip ratio,
+    // so use (1 − grip) as the slip indicator — max across wheels, ×100.
+    let mut slip = 0.0f64;
+    for i in 0..4 {
+        let g = v.wheel(i).grip_fract();
+        if g.is_finite() {
+            slip = slip.max((1.0 - g).clamp(0.0, 1.0));
+        }
+    }
+    t.wheel_slip = (slip * 100.0).round() as i32;
+    // mSuspensionDeflection @wheel+0 is a POSITION, not a velocity → susp_impact
+    // is left 0 (rF2Wheel has no suspension-velocity channel).
+
     // Tyre compound is per-AXLE (front → FL/FR, rear → RL/RR).
     let front = compound_code(v.front_compound_name());
     let rear = compound_code(v.rear_compound_name());
@@ -839,13 +930,23 @@ mod tests {
 
     #[test]
     fn parses_r3e() {
-        let mut b = vec![0u8; 1700]; // ≥1624 so the extended block (TC/ABS) is read
+        let mut b = vec![0u8; 1700]; // ≥1664 so the extended + tyre blocks are read
         b[1392..1396].copy_from_slice(&50.0f32.to_le_bytes());
         b[1396..1400].copy_from_slice(&785.40f32.to_le_bytes());
         b[1408..1412].copy_from_slice(&3i32.to_le_bytes());
         b[1500..1504].copy_from_slice(&1.0f32.to_le_bytes());
         b[1536..1540].copy_from_slice(&1i32.to_le_bytes()); // abs aid = on
         b[1540..1544].copy_from_slice(&5i32.to_le_bytes()); // tc aid = active
+                                                            // FFB channels: local_acceleration@1440 (+X=left, +Z=back → negated),
+                                                            // player suspension_velocity@424 (f64 m/s), tire_speed@1648 (m/s).
+        b[1440..1444].copy_from_slice(&(-9.81f32).to_le_bytes()); // 1 g to the right
+        b[1448..1452].copy_from_slice(&9.81f32.to_le_bytes()); // 1 g braking
+        b[432..440].copy_from_slice(&1.0f64.to_le_bytes()); // FR susp vel 1 m/s
+        b[1648..1652].copy_from_slice(&60.0f32.to_le_bytes()); // FL wheel 60 vs body 50
+        for w in 1..4 {
+            // other wheels rolling at body speed (0 would read as locked = 100%)
+            b[1648 + w * 4..1652 + w * 4].copy_from_slice(&50.0f32.to_le_bytes());
+        }
         let t = parse_r3e(&b).unwrap();
         assert_eq!(t.speed_kmh, 180);
         assert_eq!(t.rpm, 7500);
@@ -855,6 +956,22 @@ mod tests {
         assert_eq!(t.tc, 1); // 5 (active) normalises to on
         assert_eq!(t.tc_active, 1);
         assert_eq!(t.abs_active, 0);
+        assert_eq!(t.g_lat_x100, 100);
+        assert_eq!(t.g_long_x100, -100); // braking
+        assert_eq!(t.susp_impact, 500); // 1 m/s of the 2 m/s cap
+        assert_eq!(t.wheel_slip, 20); // |60-50|/50
+    }
+
+    /// A parked car (wheel speed 0, body speed 0) must read 0 slip — the raw
+    /// |wheel − max(body,1)| form would report 100%.
+    #[test]
+    fn r3e_no_slip_when_parked() {
+        let mut b = vec![0u8; 1700];
+        b[1396..1400].copy_from_slice(&80.0f32.to_le_bytes()); // idle rps (valid packet)
+        let t = parse_r3e(&b).unwrap();
+        assert_eq!(t.wheel_slip, 0);
+        assert_eq!(t.susp_impact, 0);
+        assert_eq!(t.g_long_x100, 0);
     }
 
     #[test]

@@ -617,6 +617,8 @@ pub fn save_udp_cfg(s: &State) {
         "gt7Enabled": s.gt7_enabled,
         "gt7Host": s.gt7_host,
         "shmEnabled": s.shm_enabled,
+        "wifiInputEnabled": s.wifi_input_enabled,
+        "pedalsAutoSwitch": s.pedals_auto_switch,
     });
     let _ = std::fs::write(udp_cfg_path(), j.to_string());
 }
@@ -644,6 +646,8 @@ pub fn load_udp_cfg(s: &mut State) {
     s.gt7_enabled = jbool(&j, "gt7Enabled", s.gt7_enabled);
     s.gt7_host = jstr(&j, "gt7Host", &s.gt7_host);
     s.shm_enabled = jbool(&j, "shmEnabled", s.shm_enabled);
+    s.wifi_input_enabled = jbool(&j, "wifiInputEnabled", s.wifi_input_enabled);
+    s.pedals_auto_switch = jbool(&j, "pedalsAutoSwitch", s.pedals_auto_switch);
 }
 
 fn clamp_port(v: i64, default: u16) -> u16 {

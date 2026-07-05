@@ -51,19 +51,20 @@ pub const PEDAL_ASSIGN_CFG2: i32 = 2;
 
 pub const BUZZER: i32 = 21;
 
-/// Actuator link (CONFIRMED path, see docs/pedals.md §0): UART to the
-/// board's RS232 interface chip, wired identically to how the reference
-/// project drives its default iSV57T servo — Modbus RTU on `Serial2`,
-/// 38400 8N1 per `isv57communication.cpp` (that baud/framing is the
-/// iSV57T's, used here only as a starting-point reference, NOT confirmed
-/// for the JSS57P2N). This build's actuator is a JSSmotor JSS57P2N closed-
-/// loop stepper, not an iSV57T — its Modbus register map (target position/
-/// velocity, enable, alarm status, etc.) is model-specific and was NOT
-/// obtainable from public sources when this was written (StepperOnline,
-/// JSSmotor, ThinkRobotics, Scribd, AliExpress, a Duet3D thread all 403'd
-/// or had nothing usable). DO NOT write register-level driver code against
-/// these pins until the real JSS57P2N manual is in hand — get it from the
-/// user first.
+/// Actuator link (see docs/pedals.md §0): UART to the board's RS232
+/// interface chip, wired the same way the reference project drives its
+/// default iSV57T servo. This build's actuator is a JSSmotor/Dewo JSS57P3N
+/// closed-loop stepper, driven by Modbus RTU over its 5-pin RS232 tuning
+/// port (+5V, TXD, GND, RXD, NC) — see
+/// `pith-pedals-core::servo_jss57p` for the register map/framing.
+///
+/// **Not yet safe to wire up**: whether that port's TXD/RXD are true
+/// ±RS232 voltage levels or 5V TTL is unconfirmed by the manual — scope it
+/// before connecting to this 3.3V ESP32 UART, true RS232 levels can damage
+/// it. Serial parameters (baud/parity/slave ID) are also unpublished and
+/// must be discovered on the bench (candidates: 9600/19200/38400/57600/
+/// 115200, 8N1, slave ID 1-31 — success is register 0 reading back 57). Do
+/// not assume the iSV57T's 38400 8N1.
 pub const ISV57_TX: i32 = 10;
 pub const ISV57_RX: i32 = 9;
 

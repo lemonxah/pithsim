@@ -182,6 +182,7 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
         )),
         hb_out: Arc::new((Mutex::new(None), std::sync::Condvar::new())),
         pedals_out: Arc::new(Mutex::new(None)),
+        wifi_out: Arc::new(Mutex::new(Vec::new())),
     });
 
     {
@@ -246,6 +247,13 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
     rt.spawn_blocking({
         let c = ctx.clone();
         move || crate::loops::device_writer_loop(c)
+    });
+    // WiFi/UDP transport: discovers wireless Pith devices, routes their axis
+    // into a virtual joystick (only when WiFi input mode is on), and forwards
+    // telemetry to a wireless DDU.
+    rt.spawn_blocking({
+        let c = ctx.clone();
+        move || crate::wifi::wifi_loop(c)
     });
     rt.spawn_blocking({
         let c = ctx.clone();

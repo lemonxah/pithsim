@@ -150,11 +150,11 @@ pub struct AppState {
 static STATE: OnceLock<Mutex<AppState>> = OnceLock::new();
 
 /// Initialize state: open NVS and restore any persisted config. Call once at boot
-/// before USB starts.
-pub fn init() {
-    let nvs = EspDefaultNvsPartition::take()
-        .ok()
-        .and_then(|part| EspNvs::new(part, NS, true).ok());
+/// before USB starts. The default NVS partition is taken ONCE in `main`
+/// (it's a singleton, and the WiFi driver/credentials share it) and a clone
+/// is passed in here.
+pub fn init(nvs_part: Option<EspDefaultNvsPartition>) {
+    let nvs = nvs_part.and_then(|part| EspNvs::new(part, NS, true).ok());
     let nvs_blob = EspCustomNvsPartition::take("nvsblob")
         .ok()
         .and_then(|part| EspNvs::new(part, NS, true).ok());

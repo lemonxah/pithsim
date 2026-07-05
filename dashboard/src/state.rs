@@ -242,6 +242,21 @@ pub struct State {
     pub detected_game_idx: i32,
     pub sims: Vec<(String, String)>,
 
+    // Pedal per-game/per-car auto profile switching (see dashboard/src/
+    // pedals.rs). `pedals_last_auto` dedups on a "game|car" key so a matched
+    // profile is applied once per car/game change, not every tick.
+    pub pedals_auto_switch: bool,
+    pub pedals_last_auto: String,
+
+    // WiFi input transport (see dashboard/src/wifi.rs). When
+    // `wifi_input_enabled` is OFF (default), wireless devices are still
+    // discovered but their axis is NOT routed and NO virtual joystick is
+    // created — the device's own USB HID axis is used instead. When ON, the
+    // wireless axis feeds a software virtual joystick and USB isn't needed
+    // for the game. `wifi_devices` is (kind, serial, ip) for the UI.
+    pub wifi_input_enabled: bool,
+    pub wifi_devices: Vec<(String, String, String)>,
+
     pub telem: [i32; FIELD_COUNT],
     pub gear_ch: char,
 
@@ -347,6 +362,10 @@ impl Default for State {
             .into_iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect(),
+            pedals_auto_switch: false,
+            pedals_last_auto: String::new(),
+            wifi_input_enabled: false,
+            wifi_devices: Vec::new(),
             telem: [0; FIELD_COUNT],
             gear_ch: 'N',
             pin_gpio: vec![7, 9, 8, 2, 1, 3, 5, 6, 43],

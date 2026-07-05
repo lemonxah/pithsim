@@ -1,0 +1,14 @@
+[package]
+name = "pith-fw-wifi"
+version = "0.1.0"
+edition = "2021"
+resolver = "2"
+rust-version = "1.77"
+description = "Shared firmware WiFi/UDP transport for Pith devices (DDU, handbrake, pedals): STA connect + discovery beacon + axis/state stream + @-command relay + NVS credential provisioning. Device-only (esp-idf-svc); built as a path dep of each firmware."
+repository = "https://github.com/lemonxah/pithsim"
+license = "MIT"
+
+[dependencies]
+log = "0.4"
+esp-idf-svc = "0.51"
+pith-core = { path = "../../pith-core" }

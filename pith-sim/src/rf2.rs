@@ -26,6 +26,8 @@ pub mod telem_off {
     pub const LAP_START_ET: usize = 24; // mLapStartET (double, s)
     pub const ELAPSED_TIME: usize = 12; // mElapsedTime (double, s)
     pub const LOCAL_VEL: usize = 184; // mLocalVel (Vec3 double, m/s)
+    pub const LOCAL_ACCEL: usize = 208; // mLocalAccel (Vec3 double, m/s²): x lat, z long
+                                        // (follows mLocalVel@184, +24 bytes for the Vec3)
     pub const GEAR: usize = 352; // mGear (long, -1=R 0=N)
     pub const ENGINE_RPM: usize = 356; // mEngineRPM (double)
     pub const ENGINE_WATER_TEMP: usize = 364; // mEngineWaterTemp (double, °C)
@@ -54,7 +56,10 @@ pub mod telem_off {
 
 /// Per-wheel field offsets (bytes from a wheel sub-struct base). `rF2Wheel` = 260.
 pub mod wheel_off {
+    pub const SUSPENSION_DEFLECTION: usize = 0; // mSuspensionDeflection (double, m) — a
+                                                // POSITION, not a velocity (no susp-velocity channel in rF2Wheel)
     pub const BRAKE_TEMP: usize = 24; // mBrakeTemp (double, Kelvin)
+    pub const GRIP_FRACT: usize = 112; // mGripFract (double, 0..1) — grip fraction, precedes mPressure@120
     pub const PRESSURE: usize = 120; // mPressure (double, kPa)
     pub const TEMPERATURE: usize = 128; // mTemperature[3] (double, Kelvin) L/C/R
     pub const WEAR: usize = 152; // mWear (double, 0..1 remaining)
@@ -153,6 +158,15 @@ impl<'a> VehicleTelem<'a> {
         (vx * vx + vy * vy + vz * vz).sqrt()
     }
 
+    /// Local acceleration vector (m/s²): `(x, y, z)` = (lateral, vertical,
+    /// longitudinal), RAW in ISI's local vehicle frame (InternalsPlugin.hpp:
+    /// +x = left, +y = up, +z = out the BACK of the car — so +z means
+    /// braking). Divide a component by 9.81 to get G.
+    pub fn local_accel(&self) -> (f64, f64, f64) {
+        let o = telem_off::LOCAL_ACCEL;
+        (self.f64(o), self.f64(o + 8), self.f64(o + 16))
+    }
+
     /// Front / rear tyre compound name (NUL-terminated ASCII, max 18 bytes).
     pub fn front_compound_name(&self) -> &'a str {
         ascii(self.b, self.base + telem_off::FRONT_COMPOUND_NAME, 18)
@@ -193,6 +207,11 @@ impl Wheel<'_> {
     }
     pub fn carcass_temp_k(&self) -> f64 {
         self.f64(wheel_off::CARCASS_TEMP)
+    }
+    /// Grip fraction (0..1): 1.0 = full grip, lower = sliding. rF2 has no direct
+    /// slip-ratio channel, so `(1 − grip_fract)` is used as a slip indicator.
+    pub fn grip_fract(&self) -> f64 {
+        self.f64(wheel_off::GRIP_FRACT)
     }
     pub fn brake_temp_k(&self) -> f64 {
         self.f64(wheel_off::BRAKE_TEMP)

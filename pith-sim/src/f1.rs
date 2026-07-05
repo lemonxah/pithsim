@@ -155,6 +155,48 @@ impl GameDecoder for F1Decoder {
                 t.brake_bias_x10 = le::u8(b, base + 3) as i32 * 10; // front brake bias %
                 t.pit_limiter = le::u8(b, base + 4) as i32; // pit limiter status
             }
+            // ---- Motion (id 0): per-car chassis G-forces (already in g). Each
+            // CarMotionData is 60 bytes in every handled format (unchanged by the
+            // 2026 pack); the player's car is at index `player`. ----
+            0 => {
+                let base = HEADER + 60 * player;
+                if b.len() < base + 44 {
+                    return None;
+                }
+                // F1 UDP spec: m_gForceLateral @+36, m_gForceLongitudinal @+40.
+                t.g_lat_x100 = (le::f32(b, base + 36) * 100.0).round() as i32;
+                t.g_long_x100 = (le::f32(b, base + 40) * 100.0).round() as i32;
+            }
+            // ---- MotionEx (id 13): player-car wheel slip + suspension velocity.
+            // A single (non-arrayed) struct; the fields we read sit at the front
+            // and are format-invariant across the handled years. Wheel arrays are
+            // ordered [RL, RR, FL, FR] — magnitude only, so order doesn't matter. ----
+            13 => {
+                // PacketMotionExData: m_suspensionVelocity[4] @HEADER+16 (m/s),
+                // m_wheelSlipRatio[4] @HEADER+64.
+                let susv_o = HEADER + 16;
+                let slip_o = HEADER + 64;
+                if b.len() < slip_o + 16 {
+                    return None;
+                }
+                t.wheel_slip = crate::ffb::slip_from_ratios([
+                    le::f32(b, slip_o),
+                    le::f32(b, slip_o + 4),
+                    le::f32(b, slip_o + 8),
+                    le::f32(b, slip_o + 12),
+                ]);
+                // Suspension VELOCITY → impact proxy: peak |v| normalized to
+                // 0..1000 against a documented 5.0 m/s cap.
+                t.susp_impact = crate::ffb::susp_impact_from_velocity(
+                    [
+                        le::f32(b, susv_o),
+                        le::f32(b, susv_o + 4),
+                        le::f32(b, susv_o + 8),
+                        le::f32(b, susv_o + 12),
+                    ],
+                    5.0,
+                );
+            }
             _ => return None, // packet type we don't use
         }
         Some(Decoded {

@@ -165,8 +165,17 @@ fn install_hb_update(ctx: &Arc<Ctx>) {
         return;
     }
     if !hb.get_connected() {
-        hb.set_flash_status(sstr("Handbrake not connected"));
-        return;
+        // Not on USB — a wireless handbrake can still take the update over
+        // the @OTAWIFI TCP pull (see the device loop's WiFi fallback).
+        let wireless = ctx
+            .lock()
+            .wifi_devices
+            .iter()
+            .any(|(kind, _, _)| kind == "handbrake");
+        if !wireless {
+            hb.set_flash_status(sstr("Handbrake not connected (USB or WiFi)"));
+            return;
+        }
     }
     let (tag, url) = {
         let s = ctx.lock();
@@ -379,7 +388,28 @@ pub fn hb_device_loop(ctx: Arc<Ctx>) {
                     try_connect(&ctx, &mut dev);
                 }
             }
-            take_outbox(&ctx, Duration::from_millis(300)); // nothing to act on yet; just paces the scan
+            // No USB handbrake. A queued OTA can still go out over WiFi if
+            // the device is on the network (pith-fw-wifi's @OTAWIFI TCP
+            // pull); other commands need the USB wizard and are dropped.
+            if let Some(HbOutbound::OtaFile(path)) = take_outbox(&ctx, Duration::from_millis(300)) {
+                let wireless = ctx
+                    .lock()
+                    .wifi_devices
+                    .iter()
+                    .find(|(kind, _, _)| kind == "handbrake")
+                    .map(|(_, serial, _)| serial.clone());
+                match (wireless, std::fs::read(&path)) {
+                    (Some(serial), Ok(image)) => {
+                        ctx.send_wifi(crate::wifi::WifiOut::Ota { serial, image });
+                        finish_flash(&ctx, Ok(()));
+                    }
+                    (None, _) => finish_flash(
+                        &ctx,
+                        Err("no handbrake on USB or WiFi to flash".to_string()),
+                    ),
+                    (_, Err(e)) => finish_flash(&ctx, Err(format!("read image: {e}"))),
+                }
+            }
             continue;
         }
 

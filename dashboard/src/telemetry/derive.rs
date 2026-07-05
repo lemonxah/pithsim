@@ -22,6 +22,7 @@ pub struct Provided {
     pub best_lap: bool,
     pub delta: bool,
     pub fuel_per_lap: bool,
+    pub g_long: bool,
 }
 
 impl Provided {
@@ -30,12 +31,14 @@ impl Provided {
         self.best_lap |= t.best_lap_ms != 0;
         self.delta |= t.delta_ms != 0;
         self.fuel_per_lap |= t.fuel_per_lap_ml != 0;
+        self.g_long |= t.g_long_x100 != 0;
     }
     pub fn merge(self, o: Provided) -> Provided {
         Provided {
             best_lap: self.best_lap || o.best_lap,
             delta: self.delta || o.delta,
             fuel_per_lap: self.fuel_per_lap || o.fuel_per_lap,
+            g_long: self.g_long || o.g_long,
         }
     }
 }
@@ -47,6 +50,7 @@ pub struct Derived {
     fuel: Fuel,
     ve: Ve,
     delta: Delta,
+    glong: GLong,
 }
 
 impl Derived {
@@ -82,6 +86,45 @@ impl Derived {
         t.tt_avg_fr = avg(t.tt_avg_fr, t.tt_fr_i, t.tt_fr_m, t.tt_fr_o);
         t.tt_avg_rl = avg(t.tt_avg_rl, t.tt_rl_i, t.tt_rl_m, t.tt_rl_o);
         t.tt_avg_rr = avg(t.tt_avg_rr, t.tt_rr_i, t.tt_rr_m, t.tt_rr_o);
+        // Fallback longitudinal G from Δspeed/Δt, for sources with no accel channel
+        // (Forza dash aside, GT7, etc.). Gated on `provided.g_long` (sticky) so a
+        // source that DOES report G keeps its own value — including a legitimate 0
+        // at steady throttle — instead of being overwritten by the derivative.
+        if !provided.g_long {
+            self.glong.update(t);
+        }
+    }
+}
+
+/// Fallback longitudinal G from Δspeed/Δt, run only when NO source supplies
+/// `g_long_x100` (the caller gates on `provided.g_long`). Uses the lap-timer
+/// clock (`cur_lap_ms`, ms) as the time base — the only monotonic time signal
+/// in a `Telemetry` frame. m/s² ÷ 9.81 → G, ×100.
+#[derive(Default)]
+struct GLong {
+    have: bool,
+    prev_ms: i32,
+    prev_speed_kmh: i32,
+}
+
+impl GLong {
+    fn update(&mut self, t: &mut Telemetry) {
+        let (prev_ms, prev_speed, had) = (self.prev_ms, self.prev_speed_kmh, self.have);
+        // Remember this frame for the next one, regardless of whether we compute.
+        self.prev_ms = t.cur_lap_ms;
+        self.prev_speed_kmh = t.speed_kmh;
+        self.have = true;
+        if !had {
+            return; // no previous frame yet
+        }
+        let dt_ms = t.cur_lap_ms - prev_ms;
+        // Only when the lap clock advanced by a small, sane step (guards lap
+        // resets, pauses and stale clocks).
+        if (1..2000).contains(&dt_ms) {
+            let dv_ms = (t.speed_kmh - prev_speed) as f64 / 3.6; // km/h Δ → m/s
+            let accel = dv_ms / (dt_ms as f64 / 1000.0); // m/s²
+            t.g_long_x100 = (accel / 9.81 * 100.0).round() as i32;
+        }
     }
 }
 
@@ -325,6 +368,40 @@ mod tests {
         assert_eq!(feed(&mut d, 2, 500, 500 * 80 + 200, 80_000), 2000);
         // Lap 2 at 75%: 150 ms faster → −1500.
         assert_eq!(feed(&mut d, 2, 750, 750 * 80 - 150, 80_000), -1500);
+    }
+
+    #[test]
+    fn glong_fallback_gated_on_provided() {
+        let frame = |d: &mut Derived, prov, ms, kmh, g| {
+            let mut t = Telemetry::idle();
+            t.cur_lap_ms = ms;
+            t.speed_kmh = kmh;
+            t.g_long_x100 = g;
+            d.update(&mut t, prov);
+            t.g_long_x100
+        };
+        // A source that reports G (provided.g_long sticky-true) keeps its own
+        // value — including a legitimate 0 at steady throttle. The Δspeed/Δt
+        // derivative must NOT overwrite it.
+        let provided_g = Provided {
+            g_long: true,
+            ..Default::default()
+        };
+        let mut d = Derived::default();
+        frame(&mut d, provided_g, 1000, 100, 0); // prime the previous frame
+        assert_eq!(
+            frame(&mut d, provided_g, 1100, 110, 0),
+            0,
+            "a providing source's real 0 G must survive"
+        );
+
+        // With NO source providing G, the same +10 km/h over 100 ms fills it.
+        let mut d2 = Derived::default();
+        frame(&mut d2, Provided::default(), 1000, 100, 0);
+        assert!(
+            frame(&mut d2, Provided::default(), 1100, 110, 0) > 0,
+            "derivative fills g_long only when unprovided"
+        );
     }
 
     #[test]

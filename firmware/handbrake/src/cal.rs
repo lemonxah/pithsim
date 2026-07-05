@@ -2,7 +2,7 @@
 //! per-key storage (like a bigger device's pin/layout config) would just be
 //! more ceremony for no benefit.
 
-use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition, EspNvsPartition};
+use esp_idf_svc::nvs::{EspDefaultNvs, EspDefaultNvsPartition};
 use pith_hb_core::Calibration;
 
 const NAMESPACE: &str = "hb";
@@ -12,11 +12,16 @@ pub struct CalStore {
     nvs: Option<EspDefaultNvs>,
 }
 
-pub fn init() -> CalStore {
-    let nvs = EspNvsPartition::<esp_idf_svc::nvs::NvsDefault>::take()
-        .and_then(|p: EspDefaultNvsPartition| EspDefaultNvs::new(p, NAMESPACE, true))
-        .map_err(|e| log::warn!("NVS unavailable, calibration won't persist: {e}"))
-        .ok();
+/// Open the calibration store on a clone of the shared default NVS partition.
+/// The partition is taken once in `main` (the WiFi driver needs it too) — the
+/// singleton `EspDefaultNvsPartition::take()` can only succeed once.
+pub fn init(part: Option<EspDefaultNvsPartition>) -> CalStore {
+    let nvs = part
+        .and_then(|p| {
+            EspDefaultNvs::new(p, NAMESPACE, true)
+                .map_err(|e| log::warn!("NVS unavailable, calibration won't persist: {e}"))
+                .ok()
+        });
     CalStore { nvs }
 }
 

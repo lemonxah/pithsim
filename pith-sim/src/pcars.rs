@@ -4,8 +4,10 @@
 //! Fire-and-forget UDP (default port 5606). Many packet types share a 12-byte
 //! `PacketBase`; the one we want is the **Telemetry** packet (`mPacketType == 0`,
 //! `sTelemetryData`), a 559-byte datagram carrying the player car's physics in a
-//! single self-contained packet. All the dash + shift-light fields live in the
-//! stable head region (offsets 12..180), so this is a clean stateless decode.
+//! single self-contained packet. Everything we read lives in the stable head
+//! region (offsets 12..344, before the trailing participant/compound strings),
+//! so this is a clean stateless decode. Offsets follow the pack(1)
+//! `sTelemetryData` in the public SMS_UDP_Definitions.hpp.
 
 use super::decoders::{Decoded, GameDecoder};
 use super::le;
@@ -65,6 +67,40 @@ impl GameDecoder for PCarsDecoder {
         );
         set_tyre(&mut t, fl, fr, rl, rr);
 
+        // Chassis G-forces from sLocalAcceleration[3] @100 (float x3, m/s²).
+        // Offsets computed from the pack(1) `sTelemetryData` in the public
+        // SMS_UDP_Definitions.hpp (Patch-5 UDP layout, shared verbatim by PC2 and
+        // AMS2): …sOdometerKM@48, sOrientation@52, sLocalVelocity@64,
+        // sWorldVelocity@76, sAngularVelocity@88, sLocalAcceleration@100.
+        // The Madness engine keeps the ISI/gMotor local vehicle frame (+x left,
+        // +y up, +z out the BACK of the car — the frame rF2's InternalsPlugin.hpp
+        // and r3e.h document for their shared ancestry), confirmed for this very
+        // packet by lmirel/mfc's pcars client notes ("sLocalAcceleration[2]:
+        // -ACC, +BRK"; "[0]: +LT, -RT"). Negate both so g_long is +accel/−brake
+        // and g_lat is positive-right (matching Forza's documented X=right).
+        let (ax, az) = (le::f32(b, 100), le::f32(b, 108));
+        if ax.is_finite() && az.is_finite() {
+            t.g_lat_x100 = (-ax / 9.81 * 100.0).round() as i32;
+            t.g_long_x100 = (-az / 9.81 * 100.0).round() as i32;
+        }
+        // Wheel slip: the packet carries wheel rotation sTyreRPS[4] @160 (rad/s
+        // per the field's shared-memory twin) but NO tyre radius — mTyreRadius is
+        // shared-memory-only — so rad/s can't be compared against sSpeed (m/s) to
+        // form a slip ratio. wheel_slip stays 0 rather than guessing a radius.
+        // Suspension VELOCITY sSuspensionVelocity[4] @328 (float x4; "rate of
+        // change of pushrod deflection" — sSuspensionTravel@312 is metres, so
+        // m/s) → impact proxy: peak |v| normalized to 0..1000 against the same
+        // 2.0 m/s hard-bottom-out cap the Codemasters decoder documents.
+        t.susp_impact = crate::ffb::susp_impact_from_velocity(
+            [
+                le::f32(b, 328),
+                le::f32(b, 332),
+                le::f32(b, 336),
+                le::f32(b, 340),
+            ],
+            crate::ffb::SUSP_V_CAP_HARD_BOTTOM_OUT,
+        );
+
         Some(Decoded {
             telem: t,
             car: None,
@@ -119,6 +155,23 @@ mod tests {
         let mut b = telem_packet();
         b[45] = 0x6F; // gear nibble = 15 → reverse
         assert_eq!(PCarsDecoder.decode(&b).unwrap().telem.gear, b'R');
+    }
+
+    /// G-forces come from sLocalAcceleration@100 in the gMotor frame (+x left,
+    /// +z back → both negated), susp_impact from sSuspensionVelocity@328
+    /// (2.0 m/s cap); slip stays 0 (no tyre radius in the packet).
+    #[test]
+    fn g_forces_and_suspension_impact() {
+        let mut b = telem_packet();
+        b[100..104].copy_from_slice(&(-9.81f32).to_le_bytes()); // ax: left −1 g → right +1 g
+        b[108..112].copy_from_slice(&9.81f32.to_le_bytes()); // az: back +1 g → braking
+        b[328..332].copy_from_slice(&1.0f32.to_le_bytes()); // FL susp vel 1 m/s
+        b[336..340].copy_from_slice(&(-3.0f32).to_le_bytes()); // RL −3 m/s → |v| caps
+        let t = PCarsDecoder.decode(&b).unwrap().telem;
+        assert_eq!(t.g_lat_x100, 100);
+        assert_eq!(t.g_long_x100, -100); // braking
+        assert_eq!(t.susp_impact, 1000); // 3 m/s > 2 m/s cap
+        assert_eq!(t.wheel_slip, 0); // not derivable from this packet
     }
 
     #[test]

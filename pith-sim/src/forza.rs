@@ -24,8 +24,9 @@
 //! shifts by +12 vs the Forza Motorsport layout. The Sled block (offsets 0..231,
 //! including CarOrdinal at 212) is identical across every title.
 //!
-//! Only the channels the Pith dash actually uses are pulled out; the rest of the
-//! packet (G-forces, suspension, slip, etc.) is ignored.
+//! Only the channels the Pith dash actually uses are pulled out (incl. the Sled's
+//! G-forces and tyre slip ratios); the rest of the packet (suspension travel,
+//! angular velocity, etc.) is ignored.
 
 use super::decoders::{Decoded, GameDecoder};
 use pith_core::simhub::Telemetry;
@@ -77,6 +78,20 @@ impl GameDecoder for ForzaDecoder {
         t.shift_rpm = t.max_rpm;
         // We only get here while IsRaceOn (engine running) → ignition on.
         t.ignition = 1;
+
+        // Chassis G-forces from the Sled accel vector (m/s² → G ×100). Verified
+        // against the official Forza "Data Out" format spec (Turn 10 forum):
+        // acceleration is "in the car's local space; X = right, Y = up,
+        // Z = forward" — so AccelerationX@20 = lateral (positive right) and
+        // AccelerationZ@28 = longitudinal (+accel / −brake), no negation needed.
+        // These live in the shared Sled prefix (present in every packet ≥232 B).
+        t.g_lat_x100 = (f32le(b, 20) / 9.81 * 100.0).round() as i32; // AccelerationX
+        t.g_long_x100 = (f32le(b, 28) / 9.81 * 100.0).round() as i32; // AccelerationZ
+                                                                      // TireSlipRatio[4] @84/88/92/96 (FL,FR,RL,RR) — max |ratio| ×100 (clamped).
+        t.wheel_slip =
+            crate::ffb::slip_from_ratios([f32le(b, 84), f32le(b, 88), f32le(b, 92), f32le(b, 96)]);
+        // NormalizedSuspensionTravel @68..80 is a POSITION (0..1), not a velocity,
+        // so susp_impact is left 0 (the Sled has no suspension-velocity channel).
 
         // CarOrdinal (Sled tail) → a stable, if numeric, car identity.
         let mut car = None;

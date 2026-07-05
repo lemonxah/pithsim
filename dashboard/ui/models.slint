@@ -182,6 +182,8 @@ export struct NodeBox {
 
 // A device-pixel point (used as the snapped drag delta returned by node-snap).
 export struct Pt { x: int, y: int }
+// Normalized (0..1) force-curve control point, x = travel, y = force.
+export struct CurvePt { x: float, y: float }
 
 // One element inside the selected widget's tree (list row + inline editor fields).
 export struct ElemRow {
@@ -592,6 +594,16 @@ export global Pedals {
     in property <int> position-pct-x10: 0;
     in property <int> force-n-x10: 0;
 
+    // ---- multi-pedal (SimHub-style pedal selector) ----
+    // A rig has up to three pedals (each its own board; role set by the
+    // on-board DIP switch). One shared editor is rebound to the selected
+    // role — 0=Clutch, 1=Brake, 2=Throttle — instead of three near-identical
+    // pages. `pedal-connected[i]` marks roles with a live device.
+    in-out property <int> selected-pedal: 1; // brake, the common default
+    in property <[bool]> pedal-connected: [false, false, false];
+    // Rust saves the editor into the old role's slot and loads the new one.
+    callback select-pedal(int);
+
     // Effect gains — a working subset of PedalConfig for a first UI pass
     // (0..100 sliders map directly to the 0..100 config fields/percent
     // scales pith-pedals-core::protocol documents per field).
@@ -604,6 +616,101 @@ export global Pedals {
     in-out property <int> virtual-mass-pct: 20;
     in-out property <int> virtual-damping-pct: 50;
 
+    // ---- full effect parameters (rest of each reference effect tab) ----
+    // ABS/TC: waveform (0 = sine, 1 = sawtooth), apply-by (0 = force, 1 =
+    // travel), plus the bench "simulate" test that injects a fixed level.
+    in-out property <int> abs-waveform: 0;
+    in-out property <int> abs-apply-by: 0;
+    in-out property <bool> simulate-abs: false;
+    in-out property <int> simulate-abs-value: 0;
+    // ENG/SPD (RPM) frequency sweep endpoints (Hz).
+    in-out property <int> rpm-min-freq-hz: 0;
+    in-out property <int> rpm-max-freq-hz: 0;
+    // Bite point (clutch): fires as the pedal crosses `trigger`%.
+    in-out property <bool> bite-point-enabled: false;
+    in-out property <int> bite-point-trigger-pct: 0;
+    in-out property <int> bite-point-amplitude: 0;
+    in-out property <int> bite-point-freq-hz: 0;
+    // G-force smoothing window + wheel-slip/impact frequencies/windows.
+    in-out property <int> g-window: 0;
+    in-out property <int> wheel-slip-freq-hz: 0;
+    in-out property <int> road-impact-window: 0;
+    // Four general-purpose custom vibration slots (amplitude% + frequency Hz).
+    in-out property <int> custom-amp-1: 0;
+    in-out property <int> custom-freq-1: 0;
+    in-out property <int> custom-amp-2: 0;
+    in-out property <int> custom-freq-2: 0;
+    in-out property <int> custom-amp-3: 0;
+    in-out property <int> custom-freq-3: 0;
+    in-out property <int> custom-amp-4: 0;
+    in-out property <int> custom-freq-4: 0;
+
+    // ---- pedal dynamics (rest of the reference Dynamics tab) ----
+    in-out property <int> coulomb-friction-0p1n: 0;
+    in-out property <int> damping-progression-pct: 0;
+    in-out property <int> endstop-travel-mm: 2;
+    in-out property <int> endstop-stiffness-kg-mm: 10;
+
+    // ---- pedal geometry / kinematics (mm) ----
+    in-out property <int> length-a-mm: 0;
+    in-out property <int> length-b-mm: 0;
+    in-out property <int> length-d-mm: 0;
+    in-out property <int> length-c-horizontal-mm: 0;
+    in-out property <int> length-c-vertical-mm: 0;
+    in-out property <int> length-travel-mm: 0;
+
+    // ---- axis output ----
+    // Cap on the game-facing joystick axis (percent of full range).
+    in-out property <int> max-game-output-pct: 100;
+    // Joystick axis source: 0 = force, 1 = travel.
+    in-out property <int> axis-source: 0;
+
+    // ---- calibration / servo / general ----
+    in-out property <int> loadcell-rating-kg: 50;
+    in-out property <bool> invert-loadcell: false;
+    in-out property <bool> invert-motor-direction: false;
+    in-out property <int> spindle-pitch-mm: 4;
+    in-out property <int> servo-idle-timeout-s: 30;
+    in-out property <bool> step-loss-recovery: true;
+    in-out property <bool> crash-detection: true;
+    in-out property <int> endstop-detection-threshold: 10;
+    in-out property <int> min-force-for-effects-n: 5;
+    in-out property <int> debug-flags: 0;
+
+    // ---- signal filter (loadcell denoise + joystick smoothing) ----
+    // Force filter model: 0 = const-velocity KF, 1 = const-accel KF,
+    // 2 = exponential, 3 = raw passthrough.
+    in-out property <int> kf-force-model-order: 1;
+    in-out property <int> kf-force-model-noise: 10;
+    in-out property <bool> kf-joystick-enabled: false;
+    in-out property <int> kf-joystick-model-noise: 10;
+
+    // Force-vs-travel curve — the dashboard's version of the SimHub plugin's
+    // curve editor. Points are normalized 0..1 (x = travel, y = force);
+    // `spline-commands` is the cubic-spline polyline as an SVG path string
+    // (computed in Rust from the control points, viewbox 0..1) that the
+    // editor's Path renders. Max-force/preload frame the vertical axis (kg),
+    // pedal-start/end the usable travel window (percent).
+    in property <[CurvePt]> curve-points: [{ x: 0, y: 0 }, { x: 1, y: 1 }];
+    // Spline preview as an SVG path string in a 2.5×1 viewbox (x scaled by the
+    // plot's 2.5:1 aspect, y flipped so force=1 is at the top). Built in Rust.
+    in property <string> spline-commands: "";
+    in-out property <int> max-force-kg: 60;
+    in-out property <int> preload-kg: 0;
+    in-out property <int> pedal-start-pct: 0;
+    in-out property <int> pedal-end-pct: 100;
+    // A drag moved control point `index` to normalized (x, y).
+    callback curve-point-moved(int, float, float);
+    // Right-click at normalized (x, y): add a point there, or remove the one
+    // under the cursor if close — Rust decides.
+    callback curve-right-click(float, float);
+    // Index of the control point nearest normalized (x, y), for drag-grab.
+    callback curve-nearest(float, float) -> int;
+    // One of "linear" / "s-curve" / "exponent" / "logarithm".
+    callback curve-preset(string);
+    // Max-force / preload / travel-range edited via the sliders.
+    callback curve-range-changed();
+
     in property <string> config-status: ""; // feedback after push-config
 
     // Named profiles — the dashboard's answer to the SimHub plugin's per-
@@ -615,9 +722,35 @@ export global Pedals {
     in-out property <string> profile-name: "";
     in property <[string]> profiles: [];
 
+    // Auto profile switching (SimHub parity): when on, the dashboard applies
+    // the profile whose binding matches the running game/car. `profile-bind`
+    // is the binding string (comma-separated game-sim-id / car-substring
+    // keys) for the profile currently selected in the LOAD combo.
+    in-out property <bool> auto-switch: false;
+    in-out property <string> profile-bind: "";
+
     callback push-config-requested();
     callback refresh-config-requested();
     callback save-profile-requested(string);
     callback load-profile-requested(string);
     callback delete-profile-requested(string);
+    callback set-auto-switch(bool);
+    // Save `binding` (2nd arg) as the game/car keys for profile `name` (1st).
+    callback save-binding(string, string);
+    // Fetch the stored binding string for the given profile name.
+    callback load-binding(string) -> string;
+
+    // ---- WiFi transport ----
+    // When on, a wireless device's axis feeds a software virtual joystick so
+    // the game reads it with no USB cable; when off, the device's own USB HID
+    // axis is used (no virtual joystick). Config/telemetry can still go over
+    // WiFi either way.
+    in-out property <bool> wifi-input-enabled: false;
+    // Discovered wireless devices, formatted "<kind>  <serial>  <ip>".
+    in property <[string]> wifi-devices: [];
+    // WiFi credential fields (sent to the USB-connected pedal via @WIFI).
+    in-out property <string> wifi-ssid: "";
+    in-out property <string> wifi-pass: "";
+    callback set-wifi-input(bool);
+    callback provision-wifi(string, string);
 }

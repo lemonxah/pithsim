@@ -152,4 +152,15 @@ impl Pedals {
             Reply::Err(_) => None,
         }
     }
+
+    /// `@WIFI <ssid> <password>`: provision the device's WiFi credentials over
+    /// USB. The device persists them to NVS and connects — see the firmware's
+    /// `wifi.rs`. The password may contain spaces (everything after the SSID).
+    pub fn provision_wifi(&mut self, ssid: &str, password: &str) -> Result<(), String> {
+        match self.command(&format!("@WIFI {ssid} {password}")) {
+            Some(Reply::Ok(_)) => Ok(()),
+            Some(Reply::Err(code)) => Err(code),
+            None => Err("timeout".to_string()),
+        }
+    }
 }

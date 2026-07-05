@@ -24,6 +24,8 @@ mod trackmap;
 mod tray;
 mod ui_bridge;
 mod util;
+mod vjoy;
+mod wifi;
 
 use slint::ComponentHandle;
 use std::sync::atomic::Ordering;

@@ -42,8 +42,8 @@ pub struct Runtime {
 }
 
 impl Runtime {
-    pub fn new() -> Self {
-        let store = crate::cal::init();
+    pub fn new(nvs_part: Option<esp_idf_svc::nvs::EspDefaultNvsPartition>) -> Self {
+        let store = crate::cal::init(nvs_part);
         let saved = store.load();
         Runtime {
             pending: saved,
@@ -118,7 +118,7 @@ pub extern "C" fn pith_on_hid_tx_complete() {
 
 /// Drain HID-OUT bytes buffered by the callback and process them on the main
 /// task (big stack). Call every main-loop iteration alongside the HX711 poll.
-pub fn poll_hid(rt: &mut Runtime) {
+pub fn poll_hid(rt: &mut Runtime, wifi: &pith_fw_wifi::WifiShared) {
     let bytes = {
         let mut b = HID_RX.lock().unwrap();
         if b.is_empty() {
@@ -126,10 +126,10 @@ pub fn poll_hid(rt: &mut Runtime) {
         }
         std::mem::take(&mut *b)
     };
-    feed(&bytes, rt);
+    feed(&bytes, rt, wifi);
 }
 
-fn feed(bytes: &[u8], rt: &mut Runtime) {
+fn feed(bytes: &[u8], rt: &mut Runtime, wifi: &pith_fw_wifi::WifiShared) {
     // Mid-OTA the channel carries the raw image, not text — hand every byte
     // to the OTA writer and skip line accumulation.
     if crate::ota::feed(bytes) {
@@ -158,9 +158,25 @@ fn feed(bytes: &[u8], rt: &mut Runtime) {
             crate::ota::begin(rest.trim().parse().unwrap_or(0));
             continue;
         }
-        let reply = dispatch(&line, rt);
+        let reply = handle_command(&line, rt, wifi);
         write_line(&reply);
     }
+}
+
+/// Dispatch one command line — shared by the USB channel and the WiFi
+/// transport (drained in `main`). Handles `@WIFI` provisioning, then defers
+/// to the handbrake's calibration/status protocol.
+pub fn handle_command(line: &str, rt: &mut Runtime, wifi: &pith_fw_wifi::WifiShared) -> String {
+    // Provision WiFi: `@WIFI <ssid> <password>` (password may contain spaces).
+    if let Some(rest) = line.strip_prefix("@WIFI") {
+        let rest = rest.trim();
+        if let Some((ssid, pass)) = rest.split_once(' ') {
+            *wifi.new_creds.lock().unwrap() = Some((ssid.to_string(), pass.to_string()));
+            return "OK wifi credentials saved\n".to_string();
+        }
+        return "ERR usage @WIFI ssid password\n".to_string();
+    }
+    dispatch(line, rt)
 }
 
 fn dispatch(line: &str, rt: &mut Runtime) -> String {

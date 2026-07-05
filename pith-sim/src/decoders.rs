@@ -39,6 +39,7 @@ pub const REGISTRY: &[&dyn GameDecoder] = &[
     &super::f1::F1Decoder,
     &super::pcars::PCarsDecoder,
     &super::codemasters::CodemastersDecoder,
+    &super::eawrc::EaWrcDecoder,
     &super::outgauge::OutGaugeDecoder,
     &super::piboso::PiBoSoDecoder,
 ];

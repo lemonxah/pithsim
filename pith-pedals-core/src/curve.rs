@@ -133,11 +133,28 @@ impl ForceCurve {
     /// (0..100 relative; caller scales to the configured force range).
     /// Verbatim port of `Cubic::interpolate`'s single-point case.
     pub fn eval(&self, travel_pct_q: f32) -> f32 {
+        let (seg, t, _) = self.segment_at(travel_pct_q);
+        let y = &self.force_pct;
+        (1.0 - t) * y[seg]
+            + t * y[seg + 1]
+            + t * (1.0 - t) * (self.a[seg] * (1.0 - t) + self.b[seg] * t)
+    }
+
+    /// First derivative dforce_pct/dtravel_pct at `travel_pct_q` — the port
+    /// of `EvalForceGradientCubicSpline` (normalized form): product rule on
+    /// the Hermite blend, then chain rule through `t = (q - x0)/dx`.
+    pub fn eval_gradient(&self, travel_pct_q: f32) -> f32 {
+        let (seg, t, dx) = self.segment_at(travel_pct_q);
+        let y = &self.force_pct;
+        let (a, b) = (self.a[seg], self.b[seg]);
+        let dy = y[seg + 1] - y[seg];
+        dy / dx + (1.0 - 2.0 * t) * (a * (1.0 - t) + b * t) / dx + t * (1.0 - t) * (b - a) / dx
+    }
+
+    fn segment_at(&self, travel_pct_q: f32) -> (usize, f32, f32) {
         let n = self.count;
         let x = &self.travel_pct;
-        let y = &self.force_pct;
         let q = travel_pct_q.clamp(x[0], x[n - 1]);
-
         let mut seg = 0usize;
         while seg < n - 2 {
             if q <= x[seg + 1] {
@@ -145,12 +162,40 @@ impl ForceCurve {
             }
             seg += 1;
         }
-
         let dx = x[seg + 1] - x[seg];
-        let t = (q - x[seg]) / dx;
-        (1.0 - t) * y[seg]
-            + t * y[seg + 1]
-            + t * (1.0 - t) * (self.a[seg] * (1.0 - t) + self.b[seg] * t)
+        (seg, (q - x[seg]) / dx, dx)
+    }
+}
+
+/// A [`ForceCurve`] scaled to an absolute force range — the analogue of the
+/// reference's `EvalForceCubicSpline` (which returns
+/// `forceMin + eval%/100 * (forceMax - forceMin)`, both in kg, with
+/// forceMin = preload and forceMax = max force from the config).
+#[derive(Clone, Debug)]
+pub struct ScaledCurve {
+    pub curve: ForceCurve,
+    pub min_kg: f32,
+    pub max_kg: f32,
+}
+
+impl ScaledCurve {
+    /// Absolute spring force (kg) at normalized position `pos_01` (0..1).
+    pub fn force_kg(&self, pos_01: f32) -> f32 {
+        let range = self.max_kg - self.min_kg;
+        if range > 0.0 {
+            self.min_kg + self.curve.eval(pos_01.clamp(0.0, 1.0) * 100.0) / 100.0 * range
+        } else {
+            self.min_kg
+        }
+    }
+
+    /// Local stiffness as kg per unit of normalized position (kg / pos_01).
+    /// Divide by travel-steps for the reference's kg/step; multiply by
+    /// `9.81 / total_travel_m` for N/m.
+    pub fn gradient_kg_per_unit(&self, pos_01: f32) -> f32 {
+        let range = self.max_kg - self.min_kg;
+        // d(force_kg)/d(pos_01) = d(force_pct)/d(travel_pct) * range/100 * 100
+        self.curve.eval_gradient(pos_01.clamp(0.0, 1.0) * 100.0) * range
     }
 }
 
@@ -193,5 +238,46 @@ mod tests {
         assert!(ForceCurve::from_points(&[(0.0, 0.0), (0.0, 50.0)]).is_none()); // non-increasing
         let too_many: Vec<(f32, f32)> = (0..12).map(|i| (i as f32 * 10.0, 0.0)).collect();
         assert!(ForceCurve::from_points(&too_many).is_none());
+    }
+
+    #[test]
+    fn gradient_of_linear_curve_is_slope() {
+        let c = ForceCurve::linear_default();
+        for q in [0.0, 25.0, 50.0, 99.0] {
+            assert!(
+                (c.eval_gradient(q) - 1.0).abs() < 0.01,
+                "gradient at {q} = {}",
+                c.eval_gradient(q)
+            );
+        }
+    }
+
+    #[test]
+    fn gradient_matches_finite_difference() {
+        let pts = [(0.0, 0.0), (20.0, 40.0), (60.0, 55.0), (100.0, 100.0)];
+        let c = ForceCurve::from_points(&pts).unwrap();
+        for q in [5.0f32, 30.0, 50.0, 80.0, 95.0] {
+            let h = 0.01;
+            let fd = (c.eval(q + h) - c.eval(q - h)) / (2.0 * h);
+            let an = c.eval_gradient(q);
+            assert!(
+                (fd - an).abs() < 0.05,
+                "at {q}: analytic {an} vs finite-diff {fd}"
+            );
+        }
+    }
+
+    #[test]
+    fn scaled_curve_maps_preload_to_max() {
+        let sc = ScaledCurve {
+            curve: ForceCurve::linear_default(),
+            min_kg: 2.0,
+            max_kg: 60.0,
+        };
+        assert!((sc.force_kg(0.0) - 2.0).abs() < 1e-3);
+        assert!((sc.force_kg(1.0) - 60.0).abs() < 1e-3);
+        assert!((sc.force_kg(0.5) - 31.0).abs() < 0.1);
+        // Linear: gradient = full range per unit pos.
+        assert!((sc.gradient_kg_per_unit(0.5) - 58.0).abs() < 0.5);
     }
 }

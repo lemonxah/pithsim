@@ -32,27 +32,46 @@ v1 design). Confirmed from that repo:
   crystal, 2.5V vref) — so ADS1220 (§1 below) is what the *newer* V6/V7 dev
   boards (PCB_VERSION 13/14) use, not this one.
 - **Actuator**: **not the iSV57T** (the reference project's default for this
-  board) — this build uses a **JSSmotor JSS57P2N** (NEMA23 closed-loop
-  stepper / "hybrid servo", 32-bit DSP, closed-loop by default, up to
-  200kHz step rate, 24-48V, 4.2A). It supports both step/dir pulses and
-  Modbus RTU over RS232; **decided control path: RS232 + Modbus RTU**,
-  wired exactly like the reference project wires its default iSV57T — same
-  UART pins (`ISV57_TX`/`ISV57_RX`, GPIO10/9) and the same board RS232
-  interface chip, both already on this PCB and already in `board.rs`. This
-  was revised from an earlier step/dir decision once the user confirmed
-  they want the RS232 path to match the iSV57T's wiring pattern.
-  **Blocked**: the JSS57P2N's actual Modbus register map (which address
-  holds target position/velocity, enable, alarm status, etc.) is NOT the
-  same as the iSV57T's (`isv57communication.cpp`'s registers are specific
-  to that servo) and wasn't obtainable from any public source tried
-  (StepperOnline, JSSmotor, ThinkRobotics, Scribd, AliExpress, a Duet3D
-  forum thread — all 403'd or had no usable content). Confirmed from
-  `isv57communication.cpp` as a *reference point only* (not applicable to
-  the JSS57P2N): the iSV57T's link runs Modbus RTU on `Serial2` at 38400
-  8N1. **Do not write JSS57P2N register-level driver code until the real
-  manual/register table is in hand** — sending a wrong register write to a
-  live motor controller is exactly the kind of mistake this phased plan
-  exists to avoid. Get the manual from the user before starting that work.
+  board) — this build uses a **JSSmotor/Dewo JSS57P3N** (NEMA23 closed-loop
+  stepper / "integrated digital hybrid servo", 1000-line encoder, 3 N·m
+  holding torque, 24-48V). Confirmed **not** the sibling `JSS57-R` product
+  (that's a different device on an RS485 bus with a completely different
+  register map — its manual was fetched first by mistake from an AliExpress
+  listing and is *not* applicable here; kept only as a source of
+  generic Modbus-RTU CRC/framing test vectors, since that part of the
+  protocol is universal). The real reference is the manufacturer's manual
+  for this product:
+  <https://cdn.shopify.com/s/files/1/0014/4313/5560/files/Nema23_integrated_digital_hybrid_servo.pdf>,
+  and a structured protocol brief the user compiled from it.
+  **Confirmed**: **Modbus RTU over the drive's 5-pin RS232 tuning port**
+  (+5V, TXD, GND, RXD, NC — matches the iSV57T's RS232 path, unlike the
+  JSS57-R), parameter number == holding register address (decimal 0-34).
+  Full register map + guarded read/write helpers are in
+  `pith-pedals-core/src/servo_jss57p.rs` (generic Modbus RTU framing lives
+  in `pith-pedals-core/src/modbus.rs`), transcribed from that brief.
+  **Still blocked before real hardware** (per the brief's own "UNVERIFIED"
+  flags, not resolved by reading the manual alone):
+  - **Physical layer**: whether TXD/RXD are true ±RS232 voltage levels or
+    5V TTL is unconfirmed — the +5V pin on that port suggests it may expect
+    a level-shifter cable. **Scope it before wiring to a 3.3V ESP32 UART**;
+    true RS232 levels can damage the MCU.
+  - **Serial parameters**: baud, parity, and slave ID are not published (the
+    manual defers to the vendor's "Protuner" tool) — must be discovered on
+    the bench by probing candidate bauds (9600/19200/38400/57600/115200,
+    8N1) and slave IDs (1-31), success = reading register 0 returns 57 (the
+    drive-model identity value). Do not assume the iSV57T's 38400 8N1.
+  - FC 0x10 (write-multiple-registers) support is unconfirmed for this
+    drive; if unsupported, 32-bit register pairs (accel/decel/speed/target
+    position) fall back to two sequential FC 0x06 writes.
+  `pith-pedals-core/src/servo_jss57p.rs` implements the register map, the
+  identity probe, and write-guards for the manual's do-not-write registers
+  (motor type, factory reset) and read-only registers, with unit tests
+  against `modbus.rs`'s framing — but it is **not wired into the firmware
+  runtime loop**. The next real step is the user running the bench
+  discovery/verification sequence (identity probe → bulk register compare
+  → word-order check on target-position registers → single-register write
+  test on the filter-time register → an unloaded motion test) before
+  `runtime.rs` calls into any of this.
 - **Pin map**: reproduced verbatim from the `PCB_VERSION == 9` block into
   `firmware/pedals/src/board.rs`, including two pin-reuse cases
   (GPIO4: MCP4725 DAC I2C SCL *and* brake-resistor control; GPIO6: ADC RST
@@ -234,81 +253,134 @@ names are informative only for cross-referencing plugin logic.
 
 ## 3. Phasing (why this isn't a one-session port)
 
-**Phase 1 — protocol + effects engine + dashboard UI (this pass).**
+**Phase 1 — protocol + effects + control math + dashboard UI (DONE).**
 Mechanically portable, verifiable without hardware, no motor safety
-implications:
-- `pith-pedals-core`: the config/action/state data model (JSON-encoded, see
-  §1's rationale), the 11-point force curve + its interpolation, and —
-  for full feature parity with the reference project, not just ABS — every
-  effect oscillator it has: ABS, RPM, bite-point, G-force, wheel-slip,
-  road-impact, and 4 custom-vibration slots, each a verbatim port of
-  `ESP32/include/ABSOscillation.h`'s corresponding class, unit-tested
-  against the same bounds/decay behavior as the source. These compute
-  offset *numbers* only — the waveform generator lives here now, ready for
-  Phase 2 to actually apply it to a motor target, but nothing here drives
-  anything.
-- `firmware/pedals` skeleton: boots, exposes the report-id-2 command
-  channel + `@CAP`/`@OTA` (copy the handbrake's proven USB shim), receives
-  and stores `PedalConfig`, echoes `PedalState`. **No motor/servo driver
-  yet** — the actuator output stays a documented stub until Phase 2.
-- Dashboard: `pith_device::Pedals` transport, a Pedals page (force-curve
-  editor, effect gain sliders, profiles), and the effects-trigger engine
-  wired to the telemetry merge.
-- New telemetry fields the effects need that aren't decoded yet (lateral/
-  longitudinal G, per-wheel slip ratio, suspension travel) get *added to the
-  schema* now; wiring real per-game shared-memory offsets for them is
-  deferred until verified against each game's official SDK header (AC/ACC's
-  `SPageFilePhysics.accG`/`wheelSlip` offsets specifically — **not guessed**,
-  since a wrong offset here would silently feed garbage into a physical
-  actuator's force target).
+implications — all of this is ported and host-unit-tested in
+`pith-pedals-core` (~65 tests):
+- Config/action/state data model (JSON-encoded, see §1's rationale), the
+  11-point force curve + interpolation + gradient (`curve.rs`), and every
+  effect oscillator the reference has: ABS, RPM, bite-point, G-force,
+  wheel-slip, road-impact, and 4 custom-vibration slots (`effects.rs`),
+  each a verbatim port of the matching `ESP32/include/*.h` class.
+- **The full control stack**, ported function-by-function from the reference
+  C++ and unit-tested on the host (this is what makes the pedal feel match
+  or beat the reference): linkage forward/inverse kinematics + loadcell→
+  pedal-face force conversion (`kinematics.rs` ← `PedalGeometry.h`), the
+  constant-velocity / constant-acceleration Kalman filters + exponential
+  filter (`filter.rs` ← `SignalFilter_1st/2nd_order.cpp`), the ADS1256
+  loadcell scaling + Welford bias/variance estimator (`loadcell.rs` ←
+  `LoadCell.cpp`), and the whole admittance model — Tustin integration, soft
+  endstop, Coulomb friction, regen power clamp, velocity choke, soft leash,
+  the Landi-et-al oscillation detector and position-gated virtual-mass
+  adaptation (`admittance.rs` ← `StepperMovementStrategy.h`). A `controller.rs`
+  ties raw ADC code → kg → lever → filter → effects → admittance → joystick
+  in one host-tested per-tick pipeline (the reference's `pedalUpdateTask`).
+- `firmware/pedals`: boots, exposes the report-id-2 command channel +
+  `@CAP`/`@OTA`/`@CFG`/`@ACT`/`@ARM`/`@DISARM`/`@HOME`, and wires the real
+  hardware — the **ADS1256 loadcell driver** (`ads1256.rs`, SPI + DRDY) and
+  the **JSS57P3N Modbus servo driver** (`servo.rs` over `pith-pedals-core`'s
+  tested framing) — into the control loop in `main.rs`. Compiles clean for
+  `xtensa-esp32s3-espidf`. The loadcell→joystick path runs immediately (it
+  commands nothing); motor output is disarmed by default (see Phase 2).
+- Dashboard: `pith_device::Pedals` transport, the Pedals page with an
+  **interactive force-curve editor** (draggable cubic-spline points +
+  Linear/S-Curve/Exponent/Logarithm presets + max-force/preload/travel
+  framing, mirroring the SimHub plugin), effect-gain sliders, named
+  profiles, and **per-game/per-car auto profile switching**
+  (`resolve_auto_profile`, the reference's `ApplyProfileAutoForCar/Game`).
+- Telemetry: lateral/longitudinal G, per-wheel slip, and suspension impact
+  are decoded per-game (field ids 90-93) from each source that carries them,
+  with offsets cited/verified per game rather than guessed, and fed into the
+  effects engine's `PedalAction`.
 
-**Phase 2 — actuator drive (needs your bench, one step at a time).** The
-admittance controller (`StepperMovementStrategy.h`), the iSV57 Modbus driver,
-and the loadcell ADC path get ported function-by-function against the C++
-source, but every change ships as "compiles, does NOT enable torque" until
-you've bench-tested it with the actuator on a fixture (not your foot) and
-confirmed behavior matches the reference firmware. This phase also needs
-you to pin down which actuator you're actually building (stepper+leadscrew
-vs. iSV57 servo) since the drivers are unrelated code paths.
+**Phase 2 — arm the motor on the bench (needs your hardware).** All the drive
+code exists and compiles; what's left is operator-supervised validation
+before it commands a real actuator, gated behind explicit steps so nothing
+moves by accident:
+1. **Scope the JSS57P3N's RS232 tuning port** — confirm TXD/RXD are 5 V TTL,
+   not true ±RS232, before wiring to the ESP32 UART (§0).
+2. **Discover serial params** — baud/parity/slave ID are unpublished; the
+   servo driver's `probe_identity` reads register 0 (expect 57) to find them.
+3. **Verify writes** on the safe filter-time register, then run an unloaded
+   motion test, then `@HOME` with the measured endstop sweep values.
+4. Only then `@ARM` — until armed, `servo.rs` refuses every motion command
+   and `main.rs` never forwards a target. `@DISARM` and the servo's
+   `hard_stop` (which bypasses the arm gate) are always available as e-stops.
 
 **Phase 3 — wireless (ESP-NOW multi-pedal bridge)**, if the wired v1 proves
 out and you still want it — see §4 for the *WiFi* (not ESP-NOW) transport,
 which is a separate, simpler ask already in progress for all Pith devices.
 
-## 4. WiFi transport for all Pith devices (DDU, handbrake, pedals)
+## 4. WiFi transport + wireless axis (IMPLEMENTED for pedals)
 
-Requested for every Pith firmware, not just pedals. The reference project's
-own wireless story is ESP-NOW (a connectionless 2.4 GHz protocol, no router/
-IP stack, used purely for the pedal↔bridge hop) — not WiFi/TCP. For pith,
-plain WiFi (station mode, TCP) is the better fit: it reaches the dashboard
-directly (no extra bridge board), reuses the exact same line protocol
-already spoken on HID report id 2 (the `@`-command channel + `$`/status
-replies), and needs no new wire format — just a second transport carrying
-the same bytes. Design:
+The reference project's wireless story is ESP-NOW (connectionless 2.4 GHz,
+no router/IP, pedal→bridge-dongle hop) with the bridge presenting the USB
+HID joystick to the game. Pith takes the **virtual-joystick-over-WiFi**
+route instead (the reference's optional vJoy path, done natively): the device
+streams its axis over UDP and the dashboard feeds a **software virtual
+joystick** the game reads — no bridge dongle, fully cable-free input.
 
-- **Device side**: `esp_wifi` station mode, credentials provisioned via a
-  `@WIFI<ssid>,<pass>` command over USB the first time (or a captive-portal
-  AP mode as a fallback — TBD), then a TCP listener on a fixed port speaking
-  the identical framed lines the HID channel does. mDNS (`_pith._tcp`)
-  advertises it so the dashboard doesn't need a hardcoded IP.
-- **Host side**: `pith-device` gets a `Tcp` transport implementing the same
-  interface as `Hid`/`Serial` (`open`/`write`/`read_line`/`drain`), and a
-  discovery step (mDNS browse, falling back to a manual IP field) alongside
-  the existing HID VID/PID scan.
-- **OTA over WiFi**: the existing `@OTA` protocol is transport-agnostic
-  already (it's just bytes on whatever channel `write_line`/`feed` are
-  hooked to) — once the TCP transport exists, OTA over WiFi is close to
-  free.
-- Applies to DDU, handbrake, and pedals identically once built once in
-  `pith-device` + one shared firmware-side module — this becomes a
-  `firmware/<device>/src/wifi.rs` slice per device rather than three
-  separate implementations.
+**Wire protocol** (`pith_core::net`, shared by firmware + dashboard, UDP,
+text): device broadcasts a `PITH <kind> <serial> <fw>` discovery beacon; the
+dashboard replies `@SUB`; the device then streams `AX <serial> <value>`
+(0..65535 axis, ~200 Hz) + `ST <serial> <status>` and accepts the same
+`@CFG`/`@ACT`/`?`/`@ARM`/… commands it takes over USB (replies come back as
+`RE <serial> <text>`). Ports: 42424 device→dashboard, 42425 dashboard→device.
 
-This is tracked as its own follow-on (task: "WiFi transport for all Pith
-firmware") — building it against three device targets at once is its own
-scoped pass, done after the Phase 1 pedals plumbing above lands so there's
-a third real consumer to validate the transport trait against, not just
-two.
+**Implemented:**
+- **Virtual joystick** (`dashboard/src/vjoy.rs`): Linux `/dev/uinput` via raw
+  `libc` ioctls (no extra crate), up to 8 axes, 0..65535 range matching the
+  USB HID axis. Verified registering with the kernel as a real input device.
+  Non-Linux is a stub; a Windows ViGEm/vJoy backend slots behind the same
+  `VirtualJoystick` type.
+- **Dashboard transport** (`dashboard/src/wifi.rs`): discovers devices,
+  subscribes, routes each device's axis into the virtual joystick, and
+  forwards the live `$` telemetry frame to any wireless DDU.
+- **Gated on WiFi input mode** (`State::wifi_input_enabled`, a Pedals-page
+  toggle): OFF (default) → devices are still discovered but the axis is NOT
+  routed and NO virtual joystick is created; the device's own USB HID axis is
+  what the game reads (avoids double-reporting). ON → wireless axis feeds the
+  virtual joystick, no USB cable needed for the game.
+- **Firmware** (`firmware/pedals/src/wifi.rs`): `esp_wifi` STA with
+  NVS-stored credentials, beacon + subscribe + axis/state stream + command
+  relay, on its own thread. Compile-verified for `xtensa-esp32s3-espidf`;
+  needs on-device/network bench validation like the servo path.
+- **Provisioning**: `@WIFI <ssid> <password>` over USB (dashboard Pedals-page
+  fields → `Pedals::provision_wifi`) → device persists to NVS and connects,
+  no reboot.
+
+**All devices + full routing (DONE, second pass):**
+- The device-side transport is one shared crate — `firmware/pith-fw-wifi` —
+  used by all three firmwares (pedals/handbrake stream their axis; the DDU
+  instead *receives* `$` telemetry frames over UDP, making it a fully
+  wireless dash). Production-hardened: the WiFi thread retries failed
+  connects (10 s backoff), reconnects on AP drop, and applies live `@WIFI`
+  re-provisioning without a reboot. Every firmware answers its full
+  `@`-command protocol over UDP through the same dispatcher USB uses (the
+  DDU has a `Transport::Wifi` variant; pedals/handbrake share
+  `handle_command`).
+- Dashboard routing for wireless-only devices: when no USB pedal is present
+  but one is on the network, the effects stream (`@ACT`, 50 Hz) and config
+  pushes (`@CFG`) go over UDP (`Ctx::send_wifi` → `wifi_loop` →
+  device), and `RE` replies surface in the config-status line.
+- **OTA over WiFi**: implemented as a TCP pull for reliability — the
+  dashboard serves the image on an ephemeral TCP port and sends
+  `@OTAWIFI <port> <size>` over UDP; the device connects back and streams
+  the image into its normal OTA state machine (`pith-fw-wifi::OtaHooks` →
+  each firmware's `ota::begin/feed`), then reboots via the usual
+  `should_reboot` path. The handbrake's "install update" flow uses this
+  automatically when the device is wireless-only.
+- **Multi-pedal UI**: the Pedals screen has a Clutch/Brake/Throttle
+  selector (the SimHub plugin's pattern) rebinding one shared editor to
+  per-role config slots; a config pulled from a device lands in the slot
+  matching its `pedal_type` and switches the selector to it.
+- Settings persistence: the WiFi-input toggle and profile auto-switch
+  persist across dashboard restarts (udp.json).
+
+**Still bench-gated** (needs real hardware, like the servo path): the WiFi
+firmware is compile-verified for both Xtensa targets but hasn't run on a
+real network yet — validate STA connect, discovery, axis latency, and an
+@OTAWIFI flash on the bench before calling the wireless path shipped.
 
 ## 5. PID allocation
 

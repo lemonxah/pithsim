@@ -89,6 +89,10 @@
     { "name": "tc_cut",                  "accessor": "t->tc_cut",                   "fmt": "int",      "sc": 1,      "label": "TC CUT" },
     { "name": "virtual_energy",          "accessor": "t->virtual_energy",           "fmt": "fixed1",   "sc": 10,     "label": "VE" },
     { "name": "ve_per_lap",              "accessor": "t->ve_per_lap",               "fmt": "fixed1",   "sc": 10,     "label": "VE/LAP" },
-    { "name": "fuel_is_ve",              "accessor": "t->fuel_is_ve",               "fmt": "int",      "sc": 1,      "label": "VE?" }
+    { "name": "fuel_is_ve",              "accessor": "t->fuel_is_ve",               "fmt": "int",      "sc": 1,      "label": "VE?" },
+    { "name": "g_long_x100",             "accessor": "t->g_long_x100",              "fmt": "fixed2",   "sc": 100,    "label": "G LON" },
+    { "name": "g_lat_x100",              "accessor": "t->g_lat_x100",               "fmt": "fixed2",   "sc": 100,    "label": "G LAT" },
+    { "name": "wheel_slip",              "accessor": "t->wheel_slip",               "fmt": "int",      "sc": 1,      "label": "SLIP" },
+    { "name": "susp_impact",             "accessor": "t->susp_impact",              "fmt": "int",      "sc": 1,      "label": "IMPACT" }
   ]
 }
