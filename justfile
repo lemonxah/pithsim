@@ -77,7 +77,7 @@ version:
     #!/usr/bin/env bash
     set -euo pipefail
     echo "crate versions (Cargo.toml):"
-    for f in dashboard firmware/ddu firmware/handbrake pith-core pith-hb-core pith-ui pith-device pith-flash pith-shm-bridge; do
+    for f in dashboard firmware/ddu firmware/handbrake firmware/pedals pith-core pith-hb-core pith-ui pith-device pith-flash pith-shm-bridge; do
         [ -f "$f/Cargo.toml" ] || continue
         v=$(grep -m1 '^version' "$f/Cargo.toml" | sed -E 's/version *= *"([^"]+)".*/\1/')
         printf "  %-16s %s\n" "$f" "${v:-?}"
@@ -93,6 +93,7 @@ version:
 #   just release dashboard          -> bump patch of the latest dashboard-v* tag
 #   just release ddu                -> bump patch of the latest ddu-v* tag
 #   just release handbrake          -> bump patch of the latest handbrake-v* tag
+#   just release pedals             -> bump patch of the latest pedals-v* tag
 #   just release dashboard 1.2.3    -> release that stream exactly at 1.2.3
 release stream version="":
     #!/usr/bin/env bash
@@ -102,7 +103,8 @@ release stream version="":
         dashboard) manifests=(dashboard/Cargo.toml) ;;
         ddu)       manifests=(firmware/ddu/Cargo.toml) ;;
         handbrake) manifests=(firmware/handbrake/Cargo.toml) ;;
-        *) echo "usage: just release <dashboard|ddu|handbrake> [version]" >&2; exit 1 ;;
+        pedals)    manifests=(firmware/pedals/Cargo.toml) ;;
+        *) echo "usage: just release <dashboard|ddu|handbrake|pedals> [version]" >&2; exit 1 ;;
     esac
     git fetch --tags --quiet
     ver="{{version}}"
