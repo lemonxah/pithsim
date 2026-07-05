@@ -1,6 +1,6 @@
 [package]
 name = "pith-hb-firmware"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 resolver = "2"
 rust-version = "1.77"
@@ -44,6 +44,8 @@ log = "0.4"
 # esp-idf-svc re-exports esp-idf-hal as `esp_idf_svc::hal` — no separate dep needed.
 esp-idf-svc = "0.51"
 pith-hb-core = { path = "../../pith-hb-core" }
+pith-core = { path = "../../pith-core" }
+pith-fw-wifi = { path = "../pith-fw-wifi" }
 
 [build-dependencies]
 embuild = "0.33"
