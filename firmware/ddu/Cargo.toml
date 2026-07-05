@@ -1,6 +1,6 @@
 [package]
 name = "pithddu"
-version = "0.10.11"
+version = "0.10.12"
 edition = "2021"
 resolver = "2"
 rust-version = "1.77"
@@ -38,6 +38,7 @@ xiao_s3 = []
 log = "0.4"
 esp-idf-svc = "0.51"
 pith-core = { path = "../../pith-core" }
+pith-fw-wifi = { path = "../pith-fw-wifi" }
 # Shared runtime UI engine — the device renders pith-ui UiDocs (freeform race
 # screens) with dirty-rect, identical to the desktop preview.
 pith-ui = { path = "../../pith-ui" }
