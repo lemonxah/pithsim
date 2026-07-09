@@ -1,395 +1,286 @@
-// Firmware — live device version, OTA update + local build (pick your controller).
+// Firmware — one card per connected Pith device, each showing its info, the
+// running firmware and a one-click update when a newer build is published.
+// Every device versions on its own GitHub release stream (ddu-v* / handbrake-v*
+// / pedals-v*) and updates independently over USB (@OTA); there is no shared
+// "pick a version" list — the card installs the latest build for that device.
 import { Theme } from "../theme.slint";
-import { AppState, Firmware, FwState, FwComponent, DeviceCaps, DeviceCfg, Hb } from "../models.slint";
-import { Card, PrimaryButton, GhostButton, ToggleSwitch, SectionLabel, Mono, FlipCombo, Dot } from "../widgets.slint";
-import { CheckBox } from "std-widgets.slint";
+import { AppState, Firmware, FwState, FwComponent, DeviceCaps, DeviceCfg, Hb, Pedals } from "../models.slint";
+import { Card, PrimaryButton, GhostButton, ToggleSwitch, SectionLabel, Mono, Dot } from "../widgets.slint";
 
-// One device's firmware summary + one-click update (top of the page — every
-// connected Pith device updates from here independently, not just the DDU).
-component DeviceFirmwareCard inherits Rectangle {
+// A label/value row inside a device card.
+component InfoRow inherits HorizontalLayout {
+    in property <string> k;
+    in property <string> v;
+    Text { text: root.k; color: Theme.text3; font-size: 13px; vertical-alignment: center; }
+    Rectangle { }
+    Mono { text: root.v; color: Theme.text; font-size: 13px; vertical-alignment: center; }
+}
+
+// One device's firmware card: header (status dot + name + running-version
+// summary + update button), an inline progress bar while flashing, an optional
+// status note, then any caller-supplied detail rows via @children.
+component DeviceCard inherits Rectangle {
     in property <string> name;
     in property <bool> connected: false;
-    in property <string> current: "";
+    in property <string> current: "";              // e.g. "v0.10.11" (already prefixed)
     in property <string> latest: "";
     in property <bool> update-available: false;
+    in property <bool> can-update: true;           // a build exists for this controller
     in property <bool> busy: false;
     in property <string> busy-label: "UPDATING…";
+    in property <float> progress: 0;
+    in property <string> absent-note: "Not connected";
+    in property <string> note: "";                 // transient status line (muted)
     callback install();
-    height: 92px;
     background: Theme.panel;
     border-radius: Theme.radius-card;
     border-width: 1px;
-    border-color: update-available ? Theme.accent : Theme.line;
-    HorizontalLayout {
-        padding: 16px;
-        spacing: 14px;
-        VerticalLayout {
+    border-color: (root.update-available || root.busy) ? Theme.accent : Theme.line;
+    VerticalLayout {
+        padding: 18px;
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout { alignment: center; Dot { tint: root.connected ? Theme.green : Theme.text3; } }
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 3px;
+                Text { text: root.name; color: Theme.text; font-family: Theme.display-font; font-size: 15px; font-weight: 700; }
+                Text {
+                    text: !root.connected ? root.absent-note
+                        : root.busy ? (root.busy-label)
+                        : root.current == "" ? "—"
+                        : root.update-available ? "Update available · " + root.current + " → " + root.latest
+                        : "Up to date · " + root.current;
+                    color: root.update-available ? Theme.accent-soft : Theme.text3;
+                    font-family: Theme.mono-font;
+                    font-size: 12px;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                if root.connected && root.update-available && root.can-update && !root.busy: PrimaryButton {
+                    text: "UPDATE " + root.latest;
+                    clicked => { root.install(); }
+                }
+                if root.connected && !root.update-available && !root.busy && root.current != "": HorizontalLayout {
+                    spacing: 6px;
+                    Text { text: "✓"; color: Theme.green; font-size: 15px; vertical-alignment: center; }
+                    Text { text: "Up to date"; color: Theme.text3; font-size: 12px; vertical-alignment: center; }
+                }
+            }
+        }
+        // update available but no build for this controller
+        if root.connected && root.update-available && !root.can-update && !root.busy: Mono {
+            text: "Latest " + root.latest + " has no build for this controller yet.";
+            color: Theme.amber; font-size: 11px; wrap: word-wrap;
+        }
+        // progress while downloading + flashing
+        if root.busy: VerticalLayout {
             spacing: 6px;
-            horizontal-stretch: 1;
-            HorizontalLayout {
-                spacing: 7px;
-                VerticalLayout { alignment: center; Dot { tint: root.connected ? Theme.green : Theme.text3; } }
-                Text { text: root.name; color: Theme.text; font-family: Theme.display-font; font-size: 14px; font-weight: 600; vertical-alignment: center; }
+            Rectangle {
+                height: 6px;
+                background: Theme.elev;
+                border-radius: 3px;
+                Rectangle {
+                    x: 0;
+                    width: parent.width * root.progress;
+                    height: parent.height;
+                    background: Theme.accent;
+                    border-radius: 3px;
+                    animate width { duration: 200ms; }
+                }
             }
-            Text {
-                text: !root.connected ? "Not connected"
-                    : root.current == "" ? "—"
-                    : root.update-available ? root.current + " → " + root.latest
-                    : "Up to date · " + root.current;
-                color: root.update-available ? Theme.accent-soft : Theme.text3;
-                font-family: Theme.mono-font;
-                font-size: 12px;
-            }
+            Mono { text: root.busy-label + "  " + Math.round(root.progress * 100) + "%"; color: Theme.accent; font-size: 11px; }
         }
-        VerticalLayout {
-            alignment: center;
-            if root.connected && root.update-available: PrimaryButton {
-                text: root.busy ? root.busy-label : "INSTALL " + root.latest;
-                enabled: !root.busy;
-                clicked => { root.install(); }
-            }
-        }
+        if !root.busy && root.note != "": Mono { text: root.note; color: Theme.text3; font-size: 11px; wrap: word-wrap; }
+        @children
     }
 }
 
+// One pedal role's card: DeviceCard bound to the shared Pedals globals for
+// that role, plus the connected pedal's device details. All pedal boards run
+// the same pith-pedals image; the connected one carries board/serial/live data.
+component PedalCard inherits DeviceCard {
+    in property <int> role;          // 0 = clutch, 1 = brake, 2 = throttle
+    in property <string> role-name;
+    property <bool> on: Pedals.pedal-connected[root.role];
+    name: root.role-name;
+    connected: root.on;
+    current: root.on ? "v" + Pedals.fw-version : "";
+    latest: Pedals.fw-latest;
+    update-available: root.on && Pedals.update-available;
+    busy: root.on && Pedals.flashing;
+    busy-label: "UPDATING — DO NOT DISCONNECT";
+    progress: Pedals.flash-progress;
+    note: (root.on && !Pedals.flashing) ? Pedals.flash-status : "";
+    install => { Pedals.install-update-requested(); }
+
+    // ---- device info ----
+    if root.on: Rectangle { height: 1px; background: Theme.line; }
+    if root.on && Pedals.board != "": InfoRow { k: "Board"; v: Pedals.board; }
+    if root.on && Pedals.serial != "": InfoRow { k: "Serial"; v: Pedals.serial; }
+    if root.on && Pedals.conn-detail != "": InfoRow { k: "Connection"; v: Pedals.conn-detail; }
+    if root.on: InfoRow { k: "Live"; v: (Pedals.position-pct-x10 / 10) + "% travel · " + (Pedals.force-n-x10 / 10) + " N"; }
+    if !root.on && Pedals.fw-latest != "": InfoRow { k: "Latest release"; v: Pedals.fw-latest; }
+}
+
 export component FirmwareScreen inherits Rectangle {
-    property <bool> busy: Firmware.state == FwState.downloading
+    property <bool> ddu-busy: Firmware.state == FwState.downloading
         || Firmware.state == FwState.verifying || Firmware.state == FwState.flashing;
-    property <bool> connected: AppState.connected;
-    // Accent the banner only while busy or while a real update is offered — never
-    // under a terminal "Update complete"/"Update failed" ack, so the card colour
-    // can't contradict its contents (green card still reading "Update complete").
-    property <bool> highlight: root.busy
-        || (Firmware.update-available
-            && Firmware.state != FwState.success && Firmware.state != FwState.failure);
 
     Flickable {
-        viewport-width: self.width;   // vertical scroll only; content fills width
+        viewport-width: self.width;   // vertical scroll only
         VerticalLayout {
-        padding: 24px;
-        spacing: 16px;
-        alignment: start;
-        HorizontalLayout {
-            VerticalLayout {
-                alignment: center;
-                spacing: 3px;
-                Text { text: "Firmware"; color: Theme.text; font-family: Theme.display-font; font-size: 24px; font-weight: 700; }
-                Text { text: "Every connected device updates independently"; color: Theme.text3; font-size: 13px; }
-            }
-            Rectangle { }
-        }
+            padding: 24px;
+            spacing: 16px;
+            alignment: start;
 
-        VerticalLayout {
-            spacing: 8px;
-            Text { text: "ALL DEVICES"; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
-            DeviceFirmwareCard {
+            // ---- header ----
+            HorizontalLayout {
+                spacing: 12px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+                    spacing: 3px;
+                    Text { text: "Firmware"; color: Theme.text; font-family: Theme.display-font; font-size: 24px; font-weight: 700; }
+                    Text { text: "Every connected device updates independently over USB"; color: Theme.text3; font-size: 13px; }
+                }
+                VerticalLayout {
+                    alignment: center;
+                    GhostButton {
+                        text: Firmware.fetching-releases ? "Checking…" : "↻ Check for updates";
+                        clicked => { Firmware.refresh-releases(); }
+                    }
+                }
+            }
+
+            // ================= Display unit (DDU) =================
+            SectionLabel { text: "DISPLAY UNIT"; }
+            DeviceCard {
                 name: AppState.device-name;
                 connected: AppState.connected;
                 current: Firmware.current;
                 latest: Firmware.latest;
                 update-available: Firmware.update-available;
-                busy: root.busy;
-                busy-label: Firmware.state == FwState.downloading ? "DOWNLOADING…"
-                    : Firmware.state == FwState.verifying ? "VERIFYING…" : "FLASHING…";
+                can-update: Firmware.latest-has-board;
+                busy: root.ddu-busy;
+                busy-label: Firmware.state == FwState.downloading ? "DOWNLOADING"
+                    : Firmware.state == FwState.verifying ? "VERIFYING"
+                    : "FLASHING — DO NOT DISCONNECT";
+                progress: Firmware.progress;
+                absent-note: "Connect the dash to read its firmware version";
+                note: root.ddu-busy ? "" : Firmware.status-line;
                 install => { Firmware.select-release(0); Firmware.flash-release(); }
+
+                // ---- failure / retry ----
+                if Firmware.state == FwState.failure: HorizontalLayout {
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        Text { text: "Update failed"; color: Theme.red; font-family: Theme.display-font; font-size: 13px; font-weight: 700; }
+                        Mono { text: Firmware.status-line; color: Theme.text2; font-size: 11px; }
+                    }
+                    VerticalLayout { alignment: center; PrimaryButton { text: "RETRY"; clicked => { Firmware.retry(); } } }
+                }
+
+                // ---- device info ----
+                if AppState.connected: Rectangle { height: 1px; background: Theme.line; }
+                if AppState.connected: InfoRow { k: "Controller"; v: DeviceCfg.boards.length > 0 ? DeviceCfg.boards[DeviceCfg.board] : "—"; }
+                if AppState.connected && AppState.serial != "": InfoRow { k: "Serial"; v: AppState.serial; }
+                if AppState.connected && DeviceCaps.known: InfoRow { k: "Main screen"; v: DeviceCaps.main-res; }
+                if AppState.connected && DeviceCaps.known: InfoRow { k: "Side screen"; v: DeviceCaps.side-res; }
+                if AppState.connected && DeviceCaps.known: InfoRow { k: "Shift LEDs"; v: DeviceCaps.rev-leds + " rev + " + DeviceCaps.tc-leds + " TC + " + DeviceCaps.abs-leds + " ABS"; }
+
+                // ---- live components ----
+                if AppState.connected && Firmware.components.length > 0: Rectangle { height: 1px; background: Theme.line; }
+                if AppState.connected && Firmware.components.length > 0: SectionLabel { text: "COMPONENTS"; }
+                for c in Firmware.components: HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: c.name; color: Theme.text2; font-size: 13px; vertical-alignment: center; }
+                    Rectangle { }
+                    Mono {
+                        text: c.updating ? c.version + " → " + c.target : c.version;
+                        color: c.updating ? Theme.accent : Theme.text3;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                    }
+                    if !c.updating: Text { text: "✓"; color: Theme.green; font-size: 13px; vertical-alignment: center; }
+                }
+                if AppState.connected && Firmware.components.length > 0: HorizontalLayout {
+                    Text { text: "Auto-install updates"; color: Theme.text2; font-size: 13px; vertical-alignment: center; }
+                    Rectangle { }
+                    ToggleSwitch { on: Firmware.auto-install; toggled(v) => { Firmware.auto-install = v; } }
+                }
+
+                // ---- local build (developers) ----
+                if Firmware.have-bin && AppState.connected && !root.ddu-busy: Rectangle { height: 1px; background: Theme.line; }
+                if Firmware.have-bin && AppState.connected && !root.ddu-busy: HorizontalLayout {
+                    spacing: 10px;
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        alignment: center;
+                        spacing: 2px;
+                        Text { text: "Local build ready"; color: Theme.amber; font-size: 12px; font-weight: 600; }
+                        if Firmware.bin-path != "": Mono { text: Firmware.bin-path; color: Theme.text3; font-size: 10px; }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        PrimaryButton { text: "FLASH LOCAL BUILD"; enabled: !Firmware.building; clicked => { Firmware.flash-built(); } }
+                    }
+                }
+
+                // ---- what's new ----
+                if Firmware.notes.length > 0: Rectangle { height: 1px; background: Theme.line; }
+                if Firmware.notes.length > 0: SectionLabel { text: "WHAT'S NEW"; }
+                for n in Firmware.notes: HorizontalLayout {
+                    spacing: 8px;
+                    Text { text: "▹"; color: Theme.accent; font-size: 13px; }
+                    Text { text: n; color: Theme.text2; font-size: 13px; }
+                }
             }
-            DeviceFirmwareCard {
+
+            // ================= Handbrake =================
+            SectionLabel { text: "HANDBRAKE"; }
+            DeviceCard {
                 name: "Pith Handbrake";
                 connected: Hb.connected;
-                current: "v" + Hb.fw-version;
+                current: Hb.connected ? "v" + Hb.fw-version : "";
                 latest: Hb.fw-latest;
                 update-available: Hb.update-available;
                 busy: Hb.flashing;
-                busy-label: "UPDATING…";
+                busy-label: "UPDATING — DO NOT DISCONNECT";
+                progress: Hb.flash-progress;
+                absent-note: Hb.device-found ? "Detected — connecting…" : "Not connected";
+                note: Hb.flashing ? "" : Hb.flash-status;
                 install => { Hb.install-update-requested(); }
-            }
-        }
 
-        HorizontalLayout {
-            spacing: 18px;
-            // ===== left =====
-            VerticalLayout {
-                horizontal-stretch: 1;
-                spacing: 16px;
-                // banner / install state
-                Card {
-                    background: root.highlight ? Theme.accent-dim : Theme.panel;
-                    border-color: root.highlight ? Theme.accent : Theme.line;
-                    VerticalLayout {
-                        padding: 20px;
-                        spacing: 14px;
-                        // ---- progress states ----
-                        if root.busy: VerticalLayout {
-                            spacing: 12px;
-                            Text {
-                                text: Firmware.state == FwState.downloading ? "DOWNLOADING"
-                                    : Firmware.state == FwState.verifying ? "VERIFYING SIGNATURE"
-                                    : "FLASHING — DO NOT DISCONNECT";
-                                color: Theme.accent;
-                                font-family: Theme.display-font;
-                                font-size: 16px;
-                                letter-spacing: 1.5px;
-                            }
-                            Mono { text: Firmware.status-line; color: Theme.accent-soft; font-size: 12px; }
-                            Rectangle {
-                                height: 8px;
-                                background: Theme.elev;
-                                border-radius: 4px;
-                                Rectangle {
-                                    x: 0;
-                                    width: parent.width * Firmware.progress;
-                                    height: parent.height;
-                                    background: Theme.accent;
-                                    border-radius: 4px;
-                                    animate width { duration: 200ms; }
-                                }
-                            }
-                            Mono { text: Math.round(Firmware.progress * 100) + "%"; color: Theme.accent; font-size: 13px; }
-                        }
-                        // ---- success ----
-                        if Firmware.state == FwState.success: HorizontalLayout {
-                            spacing: 10px;
-                            Text { text: "✓"; color: Theme.green; font-size: 22px; }
-                            VerticalLayout {
-                                alignment: center;
-                                Text { text: "Update complete"; color: Theme.text; font-family: Theme.display-font; font-size: 16px; font-weight: 700; }
-                                Mono { text: "Now on " + Firmware.current; color: Theme.text2; font-size: 12px; }
-                            }
-                            Rectangle { }
-                            VerticalLayout {
-                                alignment: center;
-                                GhostButton {
-                                    text: Firmware.fetching-releases ? "Checking…" : "↻ Check for updates";
-                                    clicked => { Firmware.refresh-releases(); }
-                                }
-                            }
-                        }
-                        // ---- failure ----
-                        if Firmware.state == FwState.failure: HorizontalLayout {
-                            spacing: 10px;
-                            VerticalLayout {
-                                alignment: center;
-                                horizontal-stretch: 1;
-                                Text { text: "Update failed"; color: Theme.red; font-family: Theme.display-font; font-size: 16px; font-weight: 700; }
-                                Mono { text: Firmware.status-line; color: Theme.text2; font-size: 12px; }
-                            }
-                            VerticalLayout { alignment: center; PrimaryButton { text: "RETRY"; clicked => { Firmware.retry(); } } }
-                        }
-                        // ---- not connected ----
-                        if !root.connected && !root.busy
-                            && Firmware.state != FwState.success && Firmware.state != FwState.failure: HorizontalLayout {
-                            spacing: 10px;
-                            Text { text: "○"; color: Theme.text3; font-size: 20px; }
-                            VerticalLayout {
-                                alignment: center;
-                                Text { text: "Device not connected"; color: Theme.text; font-family: Theme.display-font; font-size: 16px; font-weight: 700; }
-                                Mono { text: "Connect the dash to read its firmware version"; color: Theme.text2; font-size: 12px; }
-                            }
-                        }
-                        // ---- available ----
-                        if root.connected && Firmware.update-available && !root.busy
-                            && Firmware.state != FwState.success && Firmware.state != FwState.failure: VerticalLayout {
-                            spacing: 12px;
-                            Text { text: "UPDATE AVAILABLE"; color: Theme.accent; font-family: Theme.display-font; font-size: 13px; letter-spacing: 1.5px; }
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Mono { text: Firmware.current; color: Theme.text2; font-size: 22px; vertical-alignment: center; }
-                                Text { text: "→"; color: Theme.text3; font-size: 18px; vertical-alignment: center; }
-                                Text { text: Firmware.latest; color: Theme.text; font-family: Theme.display-font; font-size: 22px; font-weight: 700; vertical-alignment: center; }
-                                Rectangle { }
-                            }
-                            Mono {
-                                text: Firmware.latest-has-board
-                                    ? ("Downloads the " + Firmware.latest + " build for your controller from GitHub.")
-                                    : "Latest release has no build for your controller — build it yourself below.";
-                                color: Theme.text3; font-size: 12px; wrap: word-wrap;
-                            }
-                            HorizontalLayout {
-                                PrimaryButton {
-                                    text: "DOWNLOAD & INSTALL " + Firmware.latest;
-                                    enabled: Firmware.latest-has-board;
-                                    clicked => { Firmware.select-release(0); Firmware.flash-release(); }
-                                }
-                                Rectangle { }
-                            }
-                        }
-                        // ---- up to date ----
-                        if root.connected && !Firmware.update-available && !root.busy
-                            && Firmware.state != FwState.success && Firmware.state != FwState.failure: HorizontalLayout {
-                            spacing: 10px;
-                            Text { text: "✓"; color: Theme.green; font-size: 20px; }
-                            VerticalLayout {
-                                alignment: center;
-                                Text { text: "Up to date"; color: Theme.text; font-family: Theme.display-font; font-size: 16px; font-weight: 700; }
-                                Mono { text: "Running " + Firmware.current; color: Theme.text2; font-size: 12px; }
-                            }
-                            Rectangle { }
-                            VerticalLayout {
-                                alignment: center;
-                                GhostButton {
-                                    text: Firmware.fetching-releases ? "Checking…" : "↻ Check for updates";
-                                    clicked => { Firmware.refresh-releases(); }
-                                }
-                            }
-                        }
-                        // ---- local build ready (a pithddu-*.bin exists on disk) ----
-                        // Only shown when a locally built image is present + the device
-                        // is connected, so it can be OTA-flashed over USB (no boot button).
-                        if Firmware.have-bin && root.connected && !root.busy
-                            && Firmware.state != FwState.success && Firmware.state != FwState.failure: VerticalLayout {
-                            spacing: 10px;
-                            Rectangle { height: 1px; background: Theme.line; }
-                            Text { text: "LOCAL BUILD READY"; color: Theme.amber; font-family: Theme.display-font; font-size: 13px; letter-spacing: 1.5px; }
-                            Mono {
-                                text: "A locally built firmware image was found — flash it to the connected device over USB (OTA, no boot button).";
-                                color: Theme.text3; font-size: 12px; wrap: word-wrap;
-                            }
-                            HorizontalLayout {
-                                spacing: 10px;
-                                PrimaryButton {
-                                    text: "FLASH LOCAL BUILD";
-                                    enabled: !Firmware.building;
-                                    clicked => { Firmware.flash-built(); }
-                                }
-                                Rectangle { }
-                            }
-                            if Firmware.bin-path != "": Mono { text: Firmware.bin-path; color: Theme.text3; font-size: 10px; }
-                        }
-                    }
-                }
-                // published firmware versions (GitHub releases) — pick one to flash
-                Card {
-                    VerticalLayout {
-                        padding: 18px;
-                        spacing: 12px;
-                        HorizontalLayout {
-                            SectionLabel { text: "FIRMWARE VERSIONS (GITHUB)"; }
-                            Rectangle { }
-                            Mono {
-                                text: Firmware.releases-status;
-                                color: Theme.text3; font-size: 11px; vertical-alignment: center;
-                            }
-                            VerticalLayout { alignment: center; GhostButton { text: "↻ Check"; clicked => { Firmware.refresh-releases(); } } }
-                        }
-                        Text {
-                            text: "Download a released version that matches your controller and flash it over USB. Device is on " + Firmware.current + ".";
-                            color: Theme.text3; font-size: 12px; wrap: word-wrap;
-                        }
-                        VerticalLayout {
-                            spacing: 6px;
-                            SectionLabel { text: "VERSION"; }
-                            if Firmware.releases.length == 0: Mono {
-                                text: Firmware.fetching-releases ? "Checking…" : "No releases found — build your own below.";
-                                color: Theme.text3; font-size: 11px;
-                            }
-                            if Firmware.releases.length > 0: FlipCombo {
-                                model: Firmware.releases;
-                                current-index: Firmware.sel-release;
-                                enabled: !root.busy;
-                                selected(v) => { Firmware.select-release(self.current-index); }
-                            }
-                        }
-                        if Firmware.releases.length > 0 && !Firmware.release-has-board: Mono {
-                            text: "⚠ this version has no build for your controller — pick another, or build it yourself.";
-                            color: Theme.amber; font-size: 11px;
-                        }
-                        HorizontalLayout {
-                            spacing: 10px;
-                            PrimaryButton {
-                                text: "DOWNLOAD & FLASH";
-                                enabled: AppState.connected && Firmware.release-has-board && !root.busy;
-                                clicked => { Firmware.flash-release(); }
-                            }
-                            if !AppState.connected: VerticalLayout { alignment: center; Mono { text: "connect device to flash"; color: Theme.text3; font-size: 11px; } }
-                            Rectangle { }
-                        }
-                    }
-                }
-                // release notes
-                Card {
-                    VerticalLayout {
-                        padding: 18px;
-                        spacing: 10px;
-                        SectionLabel { text: "WHAT'S NEW"; }
-                        for n in Firmware.notes: HorizontalLayout {
-                            spacing: 8px;
-                            Text { text: "▹"; color: Theme.accent; font-size: 13px; }
-                            Text { text: n; color: Theme.text2; font-size: 13px; }
-                        }
-                        if Firmware.notes.length == 0: Text { text: "No release notes."; color: Theme.text3; font-size: 13px; }
-                    }
-                }
-                Rectangle { }
+                // ---- device info ----
+                if Hb.connected: Rectangle { height: 1px; background: Theme.line; }
+                if Hb.connected && Hb.board != "": InfoRow { k: "Board"; v: Hb.board; }
+                if Hb.connected && Hb.serial != "": InfoRow { k: "Serial"; v: Hb.serial; }
+                if Hb.connected && Hb.conn-detail != "": InfoRow { k: "Connection"; v: Hb.conn-detail; }
+                if Hb.connected: InfoRow { k: "Calibrated"; v: Hb.calibrated ? "Yes" : "Not yet — run the wizard on its page"; }
+                if Hb.connected && Hb.calibrated: InfoRow { k: "Raw range"; v: Hb.idle-raw + " – " + Hb.max-raw; }
+                if Hb.connected: InfoRow { k: "Deadzone"; v: Hb.deadzone-lo + "% low · " + Hb.deadzone-hi + "% high"; }
+                if Hb.connected: InfoRow { k: "Axis"; v: Hb.inverted ? "Inverted" : "Normal"; }
+                if !Hb.connected && Hb.fw-latest != "": InfoRow { k: "Latest release"; v: Hb.fw-latest; }
             }
-            // ===== right =====
-            VerticalLayout {
-                width: 320px;
-                spacing: 14px;
-                // device card
-                Card {
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 11px;
-                        SectionLabel { text: "DEVICE"; }
-                        for kv in [
-                            { k: "Name", v: AppState.device-name },
-                            { k: "Controller", v: DeviceCfg.boards.length > 0 ? DeviceCfg.boards[DeviceCfg.board] : "—" },
-                            { k: "Firmware", v: root.connected ? Firmware.current : "—" },
-                            { k: "Serial", v: AppState.serial != "" ? AppState.serial : "—" },
-                            { k: "Connection", v: AppState.conn-detail },
-                        ]: HorizontalLayout {
-                            Text { text: kv.k; color: Theme.text3; font-size: 13px; }
-                            Rectangle { }
-                            Mono { text: kv.v; color: Theme.text; font-size: 13px; }
-                        }
-                        // reported capabilities (@CAP handshake)
-                        if DeviceCaps.known: HorizontalLayout {
-                            Text { text: "Main screen"; color: Theme.text3; font-size: 13px; }
-                            Rectangle { }
-                            Mono { text: DeviceCaps.main-res; color: Theme.text; font-size: 13px; }
-                        }
-                        if DeviceCaps.known: HorizontalLayout {
-                            Text { text: "Side screen"; color: Theme.text3; font-size: 13px; }
-                            Rectangle { }
-                            Mono { text: DeviceCaps.side-res; color: Theme.text; font-size: 13px; }
-                        }
-                        if DeviceCaps.known: HorizontalLayout {
-                            Text { text: "Shift LEDs"; color: Theme.text3; font-size: 13px; }
-                            Rectangle { }
-                            Mono { text: DeviceCaps.rev-leds + " rev + " + DeviceCaps.tc-leds + " TC + " + DeviceCaps.abs-leds + " ABS"; color: Theme.text; font-size: 13px; }
-                        }
-                    }
-                }
-                // components (live, reported by the device)
-                Card {
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 11px;
-                        SectionLabel { text: "COMPONENTS"; }
-                        for c in Firmware.components: HorizontalLayout {
-                            spacing: 8px;
-                            Text { text: c.name; color: Theme.text2; font-size: 13px; vertical-alignment: center; }
-                            Rectangle { }
-                            Mono {
-                                text: c.updating ? c.version + " → " + c.target : c.version;
-                                color: c.updating ? Theme.accent : Theme.text3;
-                                font-size: 12px;
-                                vertical-alignment: center;
-                            }
-                            if !c.updating: Text { text: "✓"; color: Theme.green; font-size: 13px; vertical-alignment: center; }
-                        }
-                        if Firmware.components.length == 0: Text { text: root.connected ? "—" : "Connect to read components."; color: Theme.text3; font-size: 13px; }
-                        Rectangle { height: 2px; }
-                        HorizontalLayout {
-                            Text { text: "Auto-install updates"; color: Theme.text2; font-size: 13px; vertical-alignment: center; }
-                            Rectangle { }
-                            ToggleSwitch { on: Firmware.auto-install; toggled(v) => { Firmware.auto-install = v; } }
-                        }
-                    }
-                }
-                Rectangle { }
-            }
-        }
+
+            // ================= Active pedals (three roles) =================
+            // A rig has up to three pedals, each its own board with its role set
+            // by an on-board DIP switch. A pedal is assigned to its role's card
+            // the moment it comes online; they all run one shared pith-pedals
+            // image, so the update is offered on whichever pedal is plugged in.
+            // (One pedal talks over USB at a time — the connected role's card
+            // carries the device details.)
+            SectionLabel { text: "ACTIVE PEDALS"; }
+            PedalCard { role: 0; role-name: "Clutch"; absent-note: "No clutch pedal — plug one in (role set by its DIP switch)"; }
+            PedalCard { role: 1; role-name: "Brake"; absent-note: "No brake pedal — plug one in (role set by its DIP switch)"; }
+            PedalCard { role: 2; role-name: "Throttle"; absent-note: "No throttle pedal — plug one in (role set by its DIP switch)"; }
+
+            Rectangle { height: 8px; }
         }
     }
 }

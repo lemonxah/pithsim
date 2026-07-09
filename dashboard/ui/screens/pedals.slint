@@ -5,8 +5,8 @@
 // device; the *effects* themselves are computed by the dashboard's own
 // telemetry-driven engine (dashboard/src/pedals.rs), not SimHub.
 import { Theme } from "../theme.slint";
-import { Pedals } from "../models.slint";
-import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, Dot, AppSlider, FlipCombo, ToggleSwitch } from "../widgets.slint";
+import { AppState, Page, Pedals } from "../models.slint";
+import { Card, PrimaryButton, GhostButton, SectionLabel, Mono, Dot, AppSlider, ToggleSwitch } from "../widgets.slint";
 import { ForceCurveEditor } from "../components/force_curve.slint";
 import { LineEdit } from "std-widgets.slint";
 
@@ -24,24 +24,30 @@ component PedalTab inherits Rectangle {
     border-radius: 6px;
     VerticalLayout {
         alignment: center;
-        spacing: 4px;
+        // A content-width column centred on the tab so the underline spans
+        // exactly the dot+name group (not a fixed 80px centred on the whole
+        // tab, which the dot pushes the name off-centre from).
         HorizontalLayout {
             alignment: center;
-            spacing: 6px;
-            VerticalLayout { alignment: center; Dot { tint: root.device-on ? Theme.green : Theme.text3; } }
-            Text {
-                text: root.label;
-                color: root.active ? Theme.text : Theme.text2;
-                font-family: Theme.display-font;
-                font-size: 16px;
-                font-weight: root.active ? 700 : 500;
+            VerticalLayout {
+                spacing: 4px;
+                HorizontalLayout {
+                    spacing: 6px;
+                    VerticalLayout { alignment: center; Dot { tint: root.device-on ? Theme.green : Theme.text3; } }
+                    Text {
+                        text: root.label;
+                        color: root.active ? Theme.text : Theme.text2;
+                        font-family: Theme.display-font;
+                        font-size: 16px;
+                        font-weight: root.active ? 700 : 500;
+                    }
+                }
+                Rectangle {
+                    height: 3px;
+                    border-radius: 1.5px;
+                    background: root.active ? Theme.accent : transparent;
+                }
             }
-        }
-        Rectangle {
-            height: 3px;
-            width: 80px;
-            border-radius: 1.5px;
-            background: root.active ? Theme.accent : transparent;
         }
     }
     ta := TouchArea {
@@ -124,6 +130,9 @@ export component PedalsScreen inherits Rectangle {
     background: Theme.bg;
     Flickable {
         viewport-width: self.width;
+        // Don't flick-scroll while the force-curve plot is being used, or the
+        // page steals the left-drag and the curve won't move (see force_curve.slint).
+        interactive: !curve.plot-active;
         VerticalLayout {
             padding: 32px;
             spacing: 18px;
@@ -202,55 +211,169 @@ export component PedalsScreen inherits Rectangle {
                 VerticalLayout {
                     padding: 20px;
                     spacing: 12px;
-                    SectionLabel { text: "PROFILES"; }
+                    HorizontalLayout {
+                        SectionLabel { text: "PROFILES"; horizontal-stretch: 1; }
+                        Text {
+                            text: Pedals.profile-list.length == 1 ? "1 saved" : "\{Pedals.profile-list.length} saved";
+                            color: Theme.text3;
+                            font-family: Theme.mono-font;
+                            font-size: 11px;
+                            vertical-alignment: center;
+                        }
+                    }
                     Text {
-                        text: "Save the current gains under a name, per game or car — the dashboard's answer to the SimHub plugin's profile switching. Loading only fills in the fields below; hit PUSH TO DEVICE to apply.";
+                        text: "Save the current pedal's gains under a name, then bind it to a game or car. Loading a profile only fills in the editor — hit PUSH TO DEVICE to apply it. Each pedal (clutch / brake / throttle) has its own configuration; switch pedal above before saving or loading.";
                         color: Theme.text3;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
+
+                    // ---- save the current gains as a new (or overwriting) profile ----
                     HorizontalLayout {
                         spacing: 10px;
                         name-edit := LineEdit {
-                            width: 200px;
+                            width: 220px;
                             text: Pedals.profile-name;
-                            placeholder-text: "profile name";
+                            placeholder-text: "profile name (e.g. GT3 brake)";
                             edited(t) => { Pedals.profile-name = t; }
+                            accepted(t) => { Pedals.save-profile-requested(t); }
                         }
-                        GhostButton { text: "SAVE"; clicked => { Pedals.save-profile-requested(name-edit.text); } }
+                        GhostButton { text: "SAVE CURRENT"; clicked => { Pedals.save-profile-requested(name-edit.text); } }
                         Rectangle { }
                     }
-                    if Pedals.profiles.length > 0: VerticalLayout {
-                        spacing: 10px;
-                        HorizontalLayout {
-                            spacing: 10px;
-                            combo := FlipCombo {
-                                width: 200px;
-                                model: Pedals.profiles;
-                                current-index: 0;
-                                // Show the selected profile's binding in the field.
-                                changed current-value => { Pedals.profile-bind = Pedals.load-binding(self.current-value); }
-                            }
-                            GhostButton { text: "LOAD"; clicked => { Pedals.load-profile-requested(combo.current-value); } }
-                            GhostButton { text: "DELETE"; clicked => { Pedals.delete-profile-requested(combo.current-value); } }
-                            Rectangle { }
+
+                    // ---- saved profiles (click to select, then load / bind / delete) ----
+                    if Pedals.profile-list.length == 0: Text {
+                        text: "No saved profiles yet — set your gains, name it, and hit SAVE CURRENT.";
+                        color: Theme.text3; font-size: 12px;
+                    }
+                    for p[i] in Pedals.profile-list: Rectangle {
+                        height: 44px;
+                        border-radius: 6px;
+                        background: p.name == Pedals.active-profile ? Theme.accent-dim : (rowta.has-hover ? Theme.elev : Theme.panel2);
+                        border-width: 1px;
+                        border-color: p.name == Pedals.active-profile ? Theme.accent : Theme.line2;
+                        // Behind the buttons so a click on the row body selects it,
+                        // while clicks on LOAD/DELETE (drawn later = on top) win.
+                        rowta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { Pedals.select-profile(p.name); }
                         }
                         HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 10px;
                             spacing: 10px;
-                            bind-edit := LineEdit {
-                                width: 300px;
-                                text: Pedals.profile-bind;
-                                placeholder-text: "game/car keys for \"\{combo.current-value}\" (e.g. iracing, mx5)";
-                                edited(t) => { Pedals.profile-bind = t; }
+                            VerticalLayout {
+                                alignment: center;
+                                horizontal-stretch: 1;
+                                spacing: 1px;
+                                Text {
+                                    text: p.name;
+                                    color: p.name == Pedals.active-profile ? Theme.accent : Theme.text;
+                                    font-size: 13px;
+                                    font-weight: p.name == Pedals.active-profile ? 700 : 500;
+                                }
+                                Text {
+                                    text: p.binding != "" ? "→ " + p.binding : "not linked — select to link a game / car";
+                                    color: Theme.text3;
+                                    font-family: Theme.mono-font;
+                                    font-size: 10px;
+                                }
                             }
-                            GhostButton {
-                                text: "SET BINDING";
-                                clicked => { Pedals.save-binding(combo.current-value, bind-edit.text); }
-                            }
-                            Rectangle { }
+                            VerticalLayout { alignment: center; GhostButton {
+                                text: "LOAD";
+                                clicked => { Pedals.select-profile(p.name); Pedals.load-profile-requested(p.name); }
+                            } }
+                            VerticalLayout { alignment: center; GhostButton {
+                                text: "DELETE";
+                                clicked => { Pedals.delete-profile-requested(p.name); }
+                            } }
                         }
                     }
-                    if Pedals.profiles.length == 0: Text { text: "No saved profiles yet."; color: Theme.text3; font-size: 12px; }
+
+                    // ---- game/car linking for the selected profile ----
+                    if Pedals.active-profile != "": VerticalLayout {
+                        spacing: 10px;
+                        Rectangle { height: 1px; background: Theme.line; }
+                        Text {
+                            text: "Link \"" + Pedals.active-profile + "\" to games / cars";
+                            color: Theme.text2; font-size: 12px; font-weight: 600;
+                        }
+                        Text {
+                            text: "With auto-switch on (below), this profile is applied automatically whenever a linked game is running or a linked car is driven — car links win over game links.";
+                            color: Theme.text3; font-size: 11px; wrap: word-wrap;
+                        }
+
+                        // game chips: click to link/unlink that sim
+                        Text { text: "GAMES"; color: Theme.text3; font-family: Theme.display-font; font-size: 10px; letter-spacing: 1.2px; }
+                        VerticalLayout {
+                            spacing: 6px;
+                            for chip-row in Pedals.bind-games: HorizontalLayout {
+                                spacing: 6px;
+                                alignment: start;
+                                for g in chip-row: Rectangle {
+                                    width: gt.preferred-width + 20px;
+                                    height: 26px;
+                                    border-radius: 13px;
+                                    background: g.on ? Theme.accent-dim : (gta.has-hover ? Theme.elev : Theme.panel2);
+                                    border-width: 1px;
+                                    border-color: g.on ? Theme.accent : Theme.line2;
+                                    gt := Text {
+                                        text: (g.on ? "✓ " : "+ ") + g.name;
+                                        color: g.on ? Theme.accent : Theme.text2;
+                                        font-size: 11px;
+                                        x: (parent.width - self.width) / 2;
+                                        y: (parent.height - self.height) / 2;
+                                    }
+                                    gta := TouchArea { mouse-cursor: pointer; clicked => { Pedals.bind-toggle-game(g.id); } }
+                                }
+                            }
+                        }
+
+                        // car keys: substring of the car model name
+                        Text { text: "CARS"; color: Theme.text3; font-family: Theme.display-font; font-size: 10px; letter-spacing: 1.2px; }
+                        HorizontalLayout {
+                            spacing: 10px;
+                            car-edit := LineEdit {
+                                width: 240px;
+                                placeholder-text: "part of a car name (e.g. mx5)";
+                                accepted(t) => { Pedals.bind-add-car(t); self.text = ""; }
+                            }
+                            GhostButton { text: "+ LINK CAR"; clicked => { Pedals.bind-add-car(car-edit.text); car-edit.text = ""; } }
+                            if Pedals.detected-car != "": GhostButton {
+                                text: "+ " + Pedals.detected-car + "  (driving now)";
+                                clicked => { Pedals.bind-add-car(Pedals.detected-car); }
+                            }
+                            Rectangle { }
+                        }
+
+                        // everything this profile is linked to, as removable chips
+                        if Pedals.bind-keys.length > 0: HorizontalLayout {
+                            spacing: 6px;
+                            alignment: start;
+                            VerticalLayout { alignment: center; Text { text: "Linked to:"; color: Theme.text3; font-size: 11px; } }
+                            for k in Pedals.bind-keys: Rectangle {
+                                width: kt.preferred-width + 20px;
+                                height: 24px;
+                                border-radius: 12px;
+                                background: Theme.accent-dim;
+                                border-width: 1px;
+                                border-color: Theme.accent;
+                                kt := Text {
+                                    text: k + "  ✕";
+                                    color: Theme.accent;
+                                    font-size: 11px;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                TouchArea { mouse-cursor: pointer; clicked => { Pedals.bind-remove-key(k); } }
+                            }
+                        }
+                        if Pedals.bind-keys.length == 0: Text {
+                            text: "Not linked yet — pick a game above or add a car.";
+                            color: Theme.text3; font-size: 11px;
+                        }
+                    }
 
                     // ---- auto-switch ----
                     Rectangle { height: 1px; background: Theme.line; }
@@ -284,7 +407,7 @@ export component PedalsScreen inherits Rectangle {
                 VerticalLayout {
                     padding: 20px;
                     spacing: 12px;
-                    ForceCurveEditor { }
+                    curve := ForceCurveEditor { }
                 }
             }
 
@@ -463,69 +586,30 @@ export component PedalsScreen inherits Rectangle {
                 }
             }
 
+            // Wireless setup (network credentials + WiFi input mode) lives on
+            // the Wireless page now — one place for every Pith device.
             Card {
                 VerticalLayout {
                     padding: 20px;
-                    spacing: 12px;
+                    spacing: 8px;
                     SectionLabel { text: "WIRELESS"; }
-                    Text {
-                        text: "Run the pedal over WiFi instead of USB. Provision the pedal's network (while it's plugged in over USB), then enable WiFi input to feed a software virtual joystick the game reads — no cable needed for the axis.";
-                        color: Theme.text3;
-                        font-size: 12px;
-                        wrap: word-wrap;
-                    }
-
-                    // provisioning
-                    HorizontalLayout {
-                        spacing: 10px;
-                        ssid-edit := LineEdit {
-                            width: 180px;
-                            text: Pedals.wifi-ssid;
-                            placeholder-text: "WiFi SSID";
-                            edited(t) => { Pedals.wifi-ssid = t; }
-                        }
-                        pass-edit := LineEdit {
-                            width: 180px;
-                            text: Pedals.wifi-pass;
-                            placeholder-text: "password";
-                            edited(t) => { Pedals.wifi-pass = t; }
-                        }
-                        GhostButton {
-                            text: "SEND TO PEDAL";
-                            clicked => { if (Pedals.connected) { Pedals.provision-wifi(ssid-edit.text, pass-edit.text); } }
-                        }
-                        Rectangle { }
-                    }
-
-                    // input-mode toggle
                     HorizontalLayout {
                         spacing: 10px;
                         VerticalLayout {
                             alignment: center;
-                            ToggleSwitch {
-                                on: Pedals.wifi-input-enabled;
-                                toggled(v) => {
-                                    Pedals.wifi-input-enabled = v;
-                                    Pedals.set-wifi-input(v);
-                                }
-                            }
-                        }
-                        VerticalLayout {
-                            alignment: center;
-                            Text { text: "WiFi input mode (virtual joystick)"; color: Theme.text; font-size: 13px; }
+                            horizontal-stretch: 1;
                             Text {
-                                text: "Off = the device's own USB HID axis (default). On = a wireless device's axis feeds a virtual joystick.";
+                                text: "Run the pedals over WiFi instead of USB — network setup and the WiFi input toggle are on the Wireless page.";
                                 color: Theme.text3;
-                                font-size: 11px;
+                                font-size: 12px;
                                 wrap: word-wrap;
                             }
                         }
+                        VerticalLayout {
+                            alignment: center;
+                            GhostButton { text: "Open Wireless →"; clicked => { AppState.page = Page.wireless; } }
+                        }
                     }
-
-                    // discovered devices
-                    Text { text: "Discovered wireless devices"; color: Theme.text3; font-size: 11px; }
-                    if Pedals.wifi-devices.length == 0: Text { text: "None found on the network yet."; color: Theme.text3; font-size: 12px; }
-                    for dev in Pedals.wifi-devices: Mono { text: dev; font-size: 12px; }
                 }
             }
 

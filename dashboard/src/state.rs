@@ -172,6 +172,9 @@ pub struct FwRelease {
     /// Handbrake app images by board id (`pith-hb-<board>.bin` assets) — the
     /// handbrake stream's releases carry these (ddu releases: board_bin).
     pub hb_bin: BTreeMap<String, String>,
+    /// Pedal app images by board id (`pith-pedals-<board>.bin` assets) — the
+    /// pedals stream's releases (pedals-v* tags) carry these.
+    pub pedals_bin: BTreeMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -248,14 +251,26 @@ pub struct State {
     pub pedals_auto_switch: bool,
     pub pedals_last_auto: String,
 
-    // WiFi input transport (see dashboard/src/wifi.rs). When
-    // `wifi_input_enabled` is OFF (default), wireless devices are still
-    // discovered but their axis is NOT routed and NO virtual joystick is
-    // created — the device's own USB HID axis is used instead. When ON, the
-    // wireless axis feeds a software virtual joystick and USB isn't needed
-    // for the game. `wifi_devices` is (kind, serial, ip) for the UI.
-    pub wifi_input_enabled: bool,
-    pub wifi_devices: Vec<(String, String, String)>,
+    // Wireless (see dashboard/src/wifi.rs + the Wireless screen). One shared
+    // set of network credentials is stored here (sent to any Pith device over
+    // USB via @WIFI), plus a per-hardware enable:
+    //   - `wifi_ddu_enabled`: forward live telemetry to wireless DDUs.
+    //   - `wifi_ddu_input`: route a wireless DDU's touch-button mask into the
+    //     software virtual joystick (its 32-button box, sans USB).
+    //   - `wifi_hb_input` / `wifi_pedals_input`: route that device kind's
+    //     wireless axis into the software virtual joystick. OFF (default) the
+    //     device is still discovered but its axis is NOT routed and no virtual
+    //     joystick is created — the device's own USB HID axis is what the game
+    //     reads (avoids double-reporting).
+    // `wifi_devices` is (kind, serial, ip, fw) for the UI + the device
+    // threads' wireless modes.
+    pub wifi_ssid: String,
+    pub wifi_pass: String,
+    pub wifi_ddu_enabled: bool,
+    pub wifi_ddu_input: bool,
+    pub wifi_hb_input: bool,
+    pub wifi_pedals_input: bool,
+    pub wifi_devices: Vec<(String, String, String, String)>,
 
     pub telem: [i32; FIELD_COUNT],
     pub gear_ch: char,
@@ -276,9 +291,11 @@ pub struct State {
 
     pub device_fw: String,
     pub hb_fw: String, // handbrake firmware version (from its @CAP), for update checks
+    pub pedals_fw: String, // active-pedal firmware version (from its caps), for update checks
     pub serial_ports: Vec<crate::device::PortInfo>,
     pub releases: Vec<FwRelease>,    // DDU stream (ddu-v* tags)
     pub hb_releases: Vec<FwRelease>, // handbrake stream (handbrake-v* tags)
+    pub pedals_releases: Vec<FwRelease>, // pedals stream (pedals-v* tags)
 
     pub device_log: Vec<String>, // firmware logs streamed over HID report id 3
 
@@ -364,7 +381,12 @@ impl Default for State {
             .collect(),
             pedals_auto_switch: false,
             pedals_last_auto: String::new(),
-            wifi_input_enabled: false,
+            wifi_ssid: String::new(),
+            wifi_pass: String::new(),
+            wifi_ddu_enabled: true,
+            wifi_ddu_input: false,
+            wifi_hb_input: false,
+            wifi_pedals_input: false,
             wifi_devices: Vec::new(),
             telem: [0; FIELD_COUNT],
             gear_ch: 'N',
@@ -383,9 +405,11 @@ impl Default for State {
             board: 0,
             device_fw: String::new(),
             hb_fw: String::new(),
+            pedals_fw: String::new(),
             serial_ports: Vec::new(),
             releases: Vec::new(),
             hb_releases: Vec::new(),
+            pedals_releases: Vec::new(),
             device_log: Vec::new(),
             udp_port: 28909,
             acc_enabled: false,

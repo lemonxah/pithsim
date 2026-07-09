@@ -34,7 +34,9 @@ pub struct Status {
 }
 
 impl Status {
-    fn parse(data: &str) -> Option<Self> {
+    /// Public so the dashboard can parse the same `?` reply body when it
+    /// arrives over the WiFi transport's `RE` packets instead of USB HID.
+    pub fn parse(data: &str) -> Option<Self> {
         let kv = proto::parse_kv(data);
         let get = |key: &str| kv.iter().find(|(k, _)| *k == key).map(|(_, v)| *v);
         Some(Status {
@@ -142,6 +144,17 @@ impl Handbrake {
 
     pub fn reset(&mut self) -> bool {
         matches!(self.command("@RESET"), Some(Reply::Ok(_)))
+    }
+
+    /// `@WIFI <ssid> <password>`: provision the device's WiFi credentials over
+    /// USB. The device persists them to NVS and connects (firmware `usb.rs`).
+    /// The password may contain spaces (everything after the SSID).
+    pub fn provision_wifi(&mut self, ssid: &str, password: &str) -> Result<(), String> {
+        match self.command(&format!("@WIFI {ssid} {password}")) {
+            Some(Reply::Ok(_)) => Ok(()),
+            Some(Reply::Err(code)) => Err(code),
+            None => Err("timeout".to_string()),
+        }
     }
 
     /// `?` status: the calibration currently in effect (the firmware's

@@ -124,6 +124,19 @@ pub fn apply_status(ui: &AppWindow, s: &mut State, ctx: &Arc<Ctx>, line: &str) {
     super::uidoc::push_preview(ui, s);
 }
 
+/// Flag code (field registry `flag`) → the display name the GUI shows.
+fn flag_name(code: i32) -> &'static str {
+    match code {
+        1 => "green",
+        2 => "yellow",
+        3 => "blue",
+        4 => "white",
+        5 => "checkered",
+        6 => "black",
+        _ => "",
+    }
+}
+
 pub fn apply_telemetry(ui: &AppWindow, s: &mut State, line: &str) {
     if line.is_empty() {
         return;
@@ -150,6 +163,7 @@ pub fn apply_telemetry(ui: &AppWindow, s: &mut State, line: &str) {
     t.set_redline_active(s.telem[FIELD_RPM] >= maxr * 99 / 100);
     t.set_delta(s.telem[FIELD_DELTA_MS] as f32 / 10000.0);
     t.set_fuel(s.telem[FIELD_FUEL_DL] as f32 / 10.0);
+    t.set_flag(sstr(flag_name(s.telem[FIELD_FLAG])));
     super::race::push_resolved(ui, s);
     super::uidoc::push_preview(ui, s);
 }

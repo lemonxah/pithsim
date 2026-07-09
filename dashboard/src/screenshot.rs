@@ -23,6 +23,7 @@ const PAGES: &[(Page, &str)] = &[
     (Page::Cars, "car-library"),
     (Page::Udp, "telemetry-udp"),
     (Page::Firmware, "firmware"),
+    (Page::Wireless, "wireless"),
     (Page::Device, "device"),
     (Page::Handbrake, "handbrake"),
     (Page::Pedals, "pedals"),

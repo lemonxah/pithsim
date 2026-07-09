@@ -1,6 +1,6 @@
 // Overview / home (HANDOFF.md §9).
 import { Theme } from "../theme.slint";
-import { AppState, Page, Telemetry, ShiftCfg, Firmware, CarLib, DeviceCaps, RaceLayout, Hb } from "../models.slint";
+import { AppState, Page, Telemetry, ShiftCfg, Firmware, CarLib, DeviceCaps, RaceLayout, Hb, Pedals } from "../models.slint";
 import { Card, PrimaryButton, Dot, Mono } from "../widgets.slint";
 
 component QuickCard inherits Rectangle {
@@ -11,6 +11,56 @@ component QuickCard inherits Rectangle {
     border-color: ta.has-hover ? Theme.line2 : Theme.line;
     animate border-color { duration: 100ms; }
     ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// One device's row in the overview device list: status dot + name, firmware,
+// connection/status text, and a tap-through "Update" chip when one's available.
+component DeviceRow inherits Rectangle {
+    in property <bool> connected;
+    in property <string> name;
+    in property <string> firmware;   // "v0.10.11" or "—"
+    in property <string> status;     // connection detail / role
+    in property <bool> update-available: false;
+    callback update-clicked();
+    height: 46px;
+    HorizontalLayout {
+        spacing: 16px;
+        // name
+        HorizontalLayout {
+            width: 210px;
+            spacing: 9px;
+            VerticalLayout { alignment: center; Dot { tint: root.connected ? Theme.green : Theme.text3; } }
+            VerticalLayout {
+                alignment: center;
+                Text { text: root.name; color: root.connected ? Theme.text : Theme.text2; font-family: Theme.display-font; font-size: 14px; font-weight: 600; }
+            }
+        }
+        // firmware
+        VerticalLayout { alignment: center; width: 120px; Mono { text: root.firmware; color: root.connected ? Theme.text : Theme.text3; font-size: 14px; } }
+        // status / connection
+        VerticalLayout { alignment: center; horizontal-stretch: 1; Mono { text: root.status; color: Theme.text3; font-size: 13px; } }
+        // update chip
+        VerticalLayout {
+            alignment: center;
+            if root.update-available: Rectangle {
+                width: chip.preferred-width + 22px;
+                height: 26px;
+                background: chipta.has-hover ? Theme.accent : Theme.accent-dim;
+                border-radius: 7px;
+                border-width: 1px;
+                border-color: Theme.accent;
+                chip := Text {
+                    text: "Update →";
+                    color: chipta.has-hover ? Theme.accent-text : Theme.accent;
+                    font-size: 12px;
+                    font-weight: 600;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+                chipta := TouchArea { mouse-cursor: pointer; clicked => { root.update-clicked(); } }
+            }
+        }
+    }
 }
 
 export component OverviewScreen inherits Rectangle {
@@ -25,7 +75,7 @@ export component OverviewScreen inherits Rectangle {
                     alignment: center;
                     spacing: 3px;
                     Text { text: "Overview"; color: Theme.text; font-family: Theme.display-font; font-size: 24px; font-weight: 700; }
-                    Text { text: AppState.device-name + " · default profile"; color: Theme.text3; font-size: 13px; }
+                    Text { text: "All your Pith gear at a glance"; color: Theme.text3; font-size: 13px; }
                 }
                 Rectangle { }
                 HorizontalLayout {
@@ -45,43 +95,76 @@ export component OverviewScreen inherits Rectangle {
                     }
                 }
             }
-            // device status banner — one row of compact fields per connected
-            // device (DDU's own fields, then more devices appended below),
-            // instead of a separate card per device.
+            // device status list — one row per Pith device (DDU, handbrake, and
+            // each connected pedal), each with its own firmware + update chip.
             Card {
-                height: 84px;
-                HorizontalLayout {
-                    padding: 18px;
-                    spacing: 24px;
-                    for f in [
-                        { k: "DEVICE", v: AppState.device-name },
-                        { k: "FIRMWARE", v: AppState.fw-version },
-                        { k: "MAIN", v: DeviceCaps.main-res },
-                        { k: "SIDE", v: DeviceCaps.side-res },
-                        { k: "CONNECTION", v: AppState.conn-detail },
-                        { k: "HANDBRAKE", v: Hb.connected ? "Connected" : (Hb.device-found ? "Detected…" : "Disconnected") },
-                        { k: "HB FIRMWARE", v: Hb.fw-version != "" ? "v" + Hb.fw-version : "—" },
-                    ]: VerticalLayout {
-                        alignment: center;
-                        spacing: 5px;
-                        Text { text: f.k; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
-                        Text { text: f.v; color: Theme.text; font-family: Theme.mono-font; font-size: 14px; }
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 2px;
+                    // column header
+                    HorizontalLayout {
+                        spacing: 16px;
+                        padding-bottom: 6px;
+                        Text { text: "DEVICE"; width: 210px; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
+                        Text { text: "FIRMWARE"; width: 120px; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
+                        Text { text: "STATUS"; horizontal-stretch: 1; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
                     }
-                    Rectangle { }
-                    if Firmware.update-available: Rectangle {
-                        width: 200px;
-                        background: Theme.accent-dim;
-                        border-radius: 9px;
-                        border-width: 1px;
-                        border-color: Theme.accent;
-                        VerticalLayout {
-                            alignment: center;
-                            padding-left: 12px;
-                            spacing: 2px;
-                            Text { text: "UPDATE AVAILABLE"; color: Theme.accent; font-family: Theme.display-font; font-size: 11px; letter-spacing: 1px; }
-                            Text { text: Firmware.current + " → " + Firmware.latest; color: Theme.accent-soft; font-family: Theme.mono-font; font-size: 11px; }
-                        }
-                        TouchArea { clicked => { AppState.page = Page.firmware; } }
+                    Rectangle { height: 1px; background: Theme.line; }
+
+                    // ---- display unit ----
+                    DeviceRow {
+                        name: AppState.device-name;
+                        connected: AppState.connected;
+                        firmware: AppState.connected && AppState.fw-version != "" ? AppState.fw-version : "—";
+                        status: AppState.connected
+                            ? AppState.conn-detail + "  ·  " + DeviceCaps.main-res
+                            : "Disconnected";
+                        update-available: Firmware.update-available;
+                        update-clicked => { AppState.page = Page.firmware; }
+                    }
+                    Rectangle { height: 1px; background: Theme.line; }
+
+                    // ---- handbrake ----
+                    DeviceRow {
+                        name: "Pith Handbrake";
+                        connected: Hb.connected;
+                        firmware: Hb.connected && Hb.fw-version != "" ? "v" + Hb.fw-version : "—";
+                        status: Hb.connected ? "Connected" : (Hb.device-found ? "Detected…" : "Disconnected");
+                        update-available: Hb.update-available;
+                        update-clicked => { AppState.page = Page.firmware; }
+                    }
+                    Rectangle { height: 1px; background: Theme.line; }
+
+                    // ---- active pedals: always all three roles (each pedal is
+                    // its own board; role set by its DIP switch) ----
+                    DeviceRow {
+                        name: "Pith Pedal · Clutch";
+                        connected: Pedals.pedal-connected[0];
+                        firmware: Pedals.pedal-connected[0] && Pedals.fw-version != "" ? "v" + Pedals.fw-version : "—";
+                        status: Pedals.pedal-connected[0] ? "Connected"
+                            : (Pedals.device-found && !Pedals.connected ? "Detected…" : "Disconnected");
+                        update-available: Pedals.pedal-connected[0] && Pedals.update-available;
+                        update-clicked => { AppState.page = Page.firmware; }
+                    }
+                    Rectangle { height: 1px; background: Theme.line; }
+                    DeviceRow {
+                        name: "Pith Pedal · Brake";
+                        connected: Pedals.pedal-connected[1];
+                        firmware: Pedals.pedal-connected[1] && Pedals.fw-version != "" ? "v" + Pedals.fw-version : "—";
+                        status: Pedals.pedal-connected[1] ? "Connected"
+                            : (Pedals.device-found && !Pedals.connected ? "Detected…" : "Disconnected");
+                        update-available: Pedals.pedal-connected[1] && Pedals.update-available;
+                        update-clicked => { AppState.page = Page.firmware; }
+                    }
+                    Rectangle { height: 1px; background: Theme.line; }
+                    DeviceRow {
+                        name: "Pith Pedal · Throttle";
+                        connected: Pedals.pedal-connected[2];
+                        firmware: Pedals.pedal-connected[2] && Pedals.fw-version != "" ? "v" + Pedals.fw-version : "—";
+                        status: Pedals.pedal-connected[2] ? "Connected"
+                            : (Pedals.device-found && !Pedals.connected ? "Detected…" : "Disconnected");
+                        update-available: Pedals.pedal-connected[2] && Pedals.update-available;
+                        update-clicked => { AppState.page = Page.firmware; }
                     }
                 }
             }
@@ -106,6 +189,38 @@ export component OverviewScreen inherits Rectangle {
                         spacing: 5px;
                         Text { text: "DETECTED CAR"; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
                         Text { text: CarLib.detected-car != "" ? CarLib.detected-car : "—"; color: Theme.text; font-family: Theme.mono-font; font-size: 14px; }
+                    }
+                    // live session flag (from the telemetry merge — shm is the
+                    // flag source for AC/ACC; the broadcasting UDP has none)
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        Text { text: "FLAG"; color: Theme.text3; font-family: Theme.display-font; font-size: 10.5px; letter-spacing: 1.2px; }
+                        HorizontalLayout {
+                            spacing: 7px;
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 14px; height: 14px; border-radius: 3px;
+                                    border-width: 1px;
+                                    border-color: Theme.line2;
+                                    background: Telemetry.flag == "green" ? #00E676
+                                        : Telemetry.flag == "yellow" ? #FFB300
+                                        : Telemetry.flag == "blue" ? #2E9DFF
+                                        : Telemetry.flag == "white" ? #ECEFF4
+                                        : Telemetry.flag == "checkered" ? #9AA3B2
+                                        : Telemetry.flag == "black" ? #14161B
+                                        : transparent;
+                                }
+                            }
+                            Text {
+                                text: Telemetry.flag != "" ? Telemetry.flag : "—";
+                                color: Theme.text;
+                                font-family: Theme.mono-font;
+                                font-size: 14px;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                     Rectangle { }
                 }
@@ -179,10 +294,21 @@ export component OverviewScreen inherits Rectangle {
                     }
                 }
                 QuickCard {
+                    // Updates across ALL Pith devices — every device has its own
+                    // firmware, so a single version number means nothing here.
+                    property <int> updates: (Firmware.update-available ? 1 : 0)
+                        + (Hb.update-available ? 1 : 0)
+                        + (Pedals.update-available ? 1 : 0);
                     clicked => { AppState.page = Page.firmware; }
                     VerticalLayout { padding: 16px; spacing: 8px;
                         Text { text: "FIRMWARE"; color: Theme.text3; font-family: Theme.display-font; font-size: 11px; letter-spacing: 1.2px; }
-                        Mono { text: Firmware.current; color: Theme.text; font-size: 15px; }
+                        Text {
+                            text: updates == 0 ? "All devices up to date"
+                                : updates == 1 ? "1 update available"
+                                : "\{updates} updates available";
+                            color: updates > 0 ? Theme.accent : Theme.text;
+                            font-size: 14px;
+                        }
                         HorizontalLayout { spacing: 7px;
                             Dot { tint: Telemetry.connected ? Theme.green : Theme.text3; }
                             Text { text: Telemetry.connected ? "Telemetry live" : "Idle"; color: Theme.text2; font-size: 13px; vertical-alignment: center; }

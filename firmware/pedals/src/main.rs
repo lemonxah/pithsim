@@ -67,6 +67,7 @@ fn main() {
                 wifi::WifiOpts {
                     kind: "pedals",
                     stream_axis: true,
+                    stream_buttons: false,
                     ota: Some(wifi::OtaHooks {
                         begin: ota::begin,
                         feed: ota::feed,

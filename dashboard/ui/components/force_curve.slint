@@ -8,6 +8,7 @@
 import { Theme } from "../theme.slint";
 import { SectionLabel, Mono, AppSlider } from "../widgets.slint";
 import { Pedals } from "../models.slint";
+import { LineEdit } from "std-widgets.slint";
 
 component PresetButton inherits Rectangle {
     in property <string> label;
@@ -35,6 +36,13 @@ component PresetButton inherits Rectangle {
 
 export component ForceCurveEditor inherits VerticalLayout {
     spacing: 12px;
+
+    // True while the pointer is over the plot OR actively dragging a control
+    // point. The page's Flickable binds `interactive: !plot-active` to this so
+    // a left-drag on the curve moves the point instead of being stolen as a
+    // flick-scroll gesture (the Flickable is an ancestor of the plot). `pressed`
+    // keeps it latched even if a fast drag leaves the plot bounds mid-gesture.
+    out property <bool> plot-active: plot-ta.has-hover || plot-ta.pressed;
 
     HorizontalLayout {
         spacing: 8px;
@@ -141,7 +149,7 @@ export component ForceCurveEditor inherits VerticalLayout {
             }
 
             // one overlay TouchArea in plot coordinates handles drag + rclick
-            ta := TouchArea {
+            plot-ta := TouchArea {
                 property <int> dragging: -1;
                 pointer-event(ev) => {
                     if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
@@ -194,8 +202,29 @@ export component ForceCurveEditor inherits VerticalLayout {
         spacing: 8px;
         HorizontalLayout {
             spacing: 10px;
-            Text { text: "Max force"; color: Theme.text; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
-            Mono { text: "\{Pedals.max-force-kg} kg"; font-size: 12px; vertical-alignment: center; }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                spacing: 1px;
+                Text { text: "Max force (this pedal)"; color: Theme.text; font-size: 12px; }
+                Text {
+                    text: "Force at 100% output. Set per pedal — keep it under your load cell's rating (e.g. 45 kg on a 50 kg cell for the brake).";
+                    color: Theme.text3; font-size: 10px; wrap: word-wrap;
+                }
+            }
+            maxf-edit := LineEdit {
+                width: 58px;
+                horizontal-alignment: right;
+                text: "\{Pedals.max-force-kg}";
+                input-type: number;
+                edited(t) => {
+                    if (t.is-float() && t.to-float() >= 1 && t.to-float() <= 200) {
+                        Pedals.max-force-kg = Math.round(t.to-float());
+                        Pedals.curve-range-changed();
+                    }
+                }
+            }
+            Mono { text: "kg"; font-size: 12px; vertical-alignment: center; }
         }
         AppSlider {
             minimum: 1;
@@ -203,13 +232,26 @@ export component ForceCurveEditor inherits VerticalLayout {
             value: Pedals.max-force-kg;
             changed(v) => {
                 Pedals.max-force-kg = Math.round(v);
+                maxf-edit.text = "\{Math.round(v)}";
                 Pedals.curve-range-changed();
             }
         }
         HorizontalLayout {
             spacing: 10px;
             Text { text: "Preload"; color: Theme.text; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
-            Mono { text: "\{Pedals.preload-kg} kg"; font-size: 12px; vertical-alignment: center; }
+            preload-edit := LineEdit {
+                width: 58px;
+                horizontal-alignment: right;
+                text: "\{Pedals.preload-kg}";
+                input-type: number;
+                edited(t) => {
+                    if (t.is-float() && t.to-float() >= 0 && t.to-float() <= 100) {
+                        Pedals.preload-kg = Math.round(t.to-float());
+                        Pedals.curve-range-changed();
+                    }
+                }
+            }
+            Mono { text: "kg"; font-size: 12px; vertical-alignment: center; }
         }
         AppSlider {
             minimum: 0;
@@ -217,6 +259,7 @@ export component ForceCurveEditor inherits VerticalLayout {
             value: Pedals.preload-kg;
             changed(v) => {
                 Pedals.preload-kg = Math.round(v);
+                preload-edit.text = "\{Math.round(v)}";
                 Pedals.curve-range-changed();
             }
         }

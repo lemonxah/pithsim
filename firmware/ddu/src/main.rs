@@ -100,6 +100,10 @@ fn main() {
                 pith_fw_wifi::WifiOpts {
                     kind: "ddu",
                     stream_axis: false, // the DDU has no joystick axis to stream
+                    // …but its touch buttons ARE a 32-button box: stream the
+                    // mask so a wireless DDU's buttons reach the game via the
+                    // dashboard's virtual joystick.
+                    stream_buttons: true,
                     ota: Some(pith_fw_wifi::OtaHooks {
                         begin: ota_begin_wifi,
                         feed: ota_feed_wifi,
@@ -116,6 +120,11 @@ fn main() {
     sleep(Duration::from_millis(1000));
     ota::mark_valid();
     log::info!("USB up; image marked valid");
+    // Re-emit WHY we last reset now that the HID log channel is back: the early
+    // boot banner (line ~50) is lost when the host's device-log reconnects after
+    // the reboot's USB re-enumeration, so an involuntary reset (PANIC / watchdog /
+    // BROWNOUT) is invisible in the GUI log otherwise. This is the line to watch.
+    log::warn!("last reset reason: {rr_name}");
 
     let mut ticks: u32 = 0;
     let mut boot_confirmed = false;
@@ -131,6 +140,11 @@ fn main() {
         for line in wifi_lines {
             usb::dispatch_wifi_line(&line);
         }
+        // Publish the touch-button mask for the WiFi thread's BT stream (it
+        // sends on change, so this per-tick store is the whole hookup).
+        wifi_shared
+            .buttons
+            .store(hid::mask(), std::sync::atomic::Ordering::Relaxed);
         if ticks % 100 == 0 {
             if let Ok(mut sl) = wifi_shared.state_line.try_lock() {
                 *sl = format!(

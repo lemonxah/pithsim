@@ -617,7 +617,12 @@ pub fn save_udp_cfg(s: &State) {
         "gt7Enabled": s.gt7_enabled,
         "gt7Host": s.gt7_host,
         "shmEnabled": s.shm_enabled,
-        "wifiInputEnabled": s.wifi_input_enabled,
+        "wifiSsid": s.wifi_ssid,
+        "wifiPass": s.wifi_pass,
+        "wifiDduEnabled": s.wifi_ddu_enabled,
+        "wifiDduInput": s.wifi_ddu_input,
+        "wifiHbInput": s.wifi_hb_input,
+        "wifiPedalsInput": s.wifi_pedals_input,
         "pedalsAutoSwitch": s.pedals_auto_switch,
     });
     let _ = std::fs::write(udp_cfg_path(), j.to_string());
@@ -646,7 +651,15 @@ pub fn load_udp_cfg(s: &mut State) {
     s.gt7_enabled = jbool(&j, "gt7Enabled", s.gt7_enabled);
     s.gt7_host = jstr(&j, "gt7Host", &s.gt7_host);
     s.shm_enabled = jbool(&j, "shmEnabled", s.shm_enabled);
-    s.wifi_input_enabled = jbool(&j, "wifiInputEnabled", s.wifi_input_enabled);
+    s.wifi_ssid = jstr(&j, "wifiSsid", &s.wifi_ssid);
+    s.wifi_pass = jstr(&j, "wifiPass", &s.wifi_pass);
+    s.wifi_ddu_enabled = jbool(&j, "wifiDduEnabled", s.wifi_ddu_enabled);
+    s.wifi_ddu_input = jbool(&j, "wifiDduInput", s.wifi_ddu_input);
+    // Legacy single toggle (pre-Wireless-screen) seeds both input flags;
+    // the per-hardware keys override it when present.
+    let legacy_input = jbool(&j, "wifiInputEnabled", false);
+    s.wifi_hb_input = jbool(&j, "wifiHbInput", legacy_input);
+    s.wifi_pedals_input = jbool(&j, "wifiPedalsInput", legacy_input);
     s.pedals_auto_switch = jbool(&j, "pedalsAutoSwitch", s.pedals_auto_switch);
 }
 

@@ -26,6 +26,7 @@ mod ui_bridge;
 mod util;
 mod vjoy;
 mod wifi;
+mod wireless;
 
 use slint::ComponentHandle;
 use std::sync::atomic::Ordering;

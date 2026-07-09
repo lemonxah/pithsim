@@ -1,0 +1,224 @@
+// Wireless — one place to configure the WiFi link for every Pith device.
+// The network credentials are entered ONCE here (persisted locally), then
+// sent to each device over its USB cable (@WIFI — the device stores them in
+// NVS and joins the network by itself). Below that, a per-hardware toggle
+// decides what the wireless link is used for:
+//   - DDU: the dashboard streams live telemetry to it over WiFi.
+//   - Handbrake / pedals: the device's wireless axis feeds a software
+//     virtual joystick so the game needs no USB cable.
+import { Theme } from "../theme.slint";
+import { AppState, Hb, Pedals, Wireless } from "../models.slint";
+import { Card, PrimaryButton, GhostButton, ToggleSwitch, SectionLabel, Mono, Dot } from "../widgets.slint";
+import { LineEdit } from "std-widgets.slint";
+
+// One hardware's wireless row: connection dot + name, a SEND CREDENTIALS
+// button (needs the device on USB + an SSID entered above), its wireless-mode
+// toggle, and a status line.
+component DeviceWirelessRow inherits VerticalLayout {
+    in property <string> name;
+    in property <bool> usb-connected;
+    in property <string> usb-status;
+    in property <bool> can-send;       // an SSID has been entered
+    in property <string> toggle-label;
+    in property <string> toggle-sub;
+    in property <bool> on;
+    // Optional second wireless mode (shown when its label is set).
+    in property <string> toggle2-label: "";
+    in property <string> toggle2-sub: "";
+    in property <bool> on2: false;
+    in property <string> status: "";
+    callback provision();
+    callback toggled(bool);
+    callback toggled2(bool);
+    spacing: 8px;
+    HorizontalLayout {
+        spacing: 10px;
+        VerticalLayout { alignment: center; Dot { tint: root.usb-connected ? Theme.green : Theme.text3; } }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            Text { text: root.name; color: Theme.text; font-family: Theme.display-font; font-size: 14px; font-weight: 600; }
+            Text {
+                text: root.usb-status;
+                color: Theme.text3;
+                font-size: 11px;
+            }
+        }
+        VerticalLayout {
+            alignment: center;
+            PrimaryButton {
+                text: "SEND CREDENTIALS";
+                enabled: root.usb-connected && root.can-send;
+                clicked => { root.provision(); }
+            }
+        }
+    }
+    HorizontalLayout {
+        padding-left: 18px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            ToggleSwitch { on: root.on; toggled(v) => { root.toggled(v); } }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 1px;
+            Text { text: root.toggle-label; color: Theme.text; font-size: 13px; }
+            Text { text: root.toggle-sub; color: Theme.text3; font-size: 11px; wrap: word-wrap; }
+        }
+    }
+    if root.toggle2-label != "": HorizontalLayout {
+        padding-left: 18px;
+        spacing: 10px;
+        VerticalLayout {
+            alignment: center;
+            ToggleSwitch { on: root.on2; toggled(v) => { root.toggled2(v); } }
+        }
+        VerticalLayout {
+            alignment: center;
+            spacing: 1px;
+            Text { text: root.toggle2-label; color: Theme.text; font-size: 13px; }
+            Text { text: root.toggle2-sub; color: Theme.text3; font-size: 11px; wrap: word-wrap; }
+        }
+    }
+    if root.status != "": Mono { text: root.status; color: Theme.text2; font-size: 11px; }
+}
+
+export component WirelessScreen inherits Rectangle {
+    Flickable {
+        viewport-width: self.width;   // vertical scroll only
+        VerticalLayout {
+            padding: 24px;
+            spacing: 16px;
+            alignment: start;
+
+            // ---- header ----
+            VerticalLayout {
+                spacing: 3px;
+                Text { text: "Wireless"; color: Theme.text; font-family: Theme.display-font; font-size: 24px; font-weight: 700; }
+                Text { text: "Set your network once, then pick what each device uses WiFi for"; color: Theme.text3; font-size: 13px; }
+            }
+
+            // ---- shared network credentials ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 12px;
+                    SectionLabel { text: "NETWORK"; }
+                    Text {
+                        text: "One network for all Pith gear. Credentials are stored on this PC and sent to a device over its USB cable — the device remembers them and joins the network on its own from then on.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 10px;
+                        ssid-edit := LineEdit {
+                            width: 220px;
+                            text: Wireless.ssid;
+                            placeholder-text: "WiFi SSID";
+                            edited(t) => { Wireless.ssid = t; }
+                        }
+                        pass-edit := LineEdit {
+                            width: 220px;
+                            text: Wireless.pass;
+                            placeholder-text: "password";
+                            input-type: password;
+                            edited(t) => { Wireless.pass = t; }
+                        }
+                        PrimaryButton {
+                            text: "SAVE NETWORK";
+                            clicked => { Wireless.save-credentials(ssid-edit.text, pass-edit.text); }
+                        }
+                        Rectangle { }
+                    }
+                    if Wireless.creds-status != "": Mono { text: Wireless.creds-status; color: Theme.text2; font-size: 11px; }
+                }
+            }
+
+            // ---- per-hardware wireless modes ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 16px;
+                    SectionLabel { text: "DEVICES"; }
+
+                    DeviceWirelessRow {
+                        name: AppState.device-name;
+                        usb-connected: AppState.connected;
+                        usb-status: AppState.connected ? "On USB — ready to receive the network" : "Not on USB — plug it in to send the network";
+                        can-send: Wireless.ssid != "";
+                        toggle-label: "Stream telemetry over WiFi";
+                        toggle-sub: "Wireless DDUs on the network get the live telemetry feed — mount the dash anywhere, no cable.";
+                        on: Wireless.ddu-enabled;
+                        toggle2-label: "WiFi buttons (virtual joystick)";
+                        toggle2-sub: "The wireless DDU's touch buttons press a virtual joystick's buttons the game reads. Off = its own USB HID buttons.";
+                        on2: Wireless.ddu-input-enabled;
+                        status: Wireless.ddu-status;
+                        provision => { Wireless.provision-ddu(); }
+                        toggled(v) => { Wireless.ddu-enabled = v; Wireless.set-ddu-enabled(v); }
+                        toggled2(v) => { Wireless.ddu-input-enabled = v; Wireless.set-ddu-input(v); }
+                    }
+                    Rectangle { height: 1px; background: Theme.line; }
+
+                    DeviceWirelessRow {
+                        name: "Pith Handbrake";
+                        usb-connected: Hb.connected;
+                        usb-status: Hb.connected ? "On USB — ready to receive the network"
+                            : Hb.device-found ? "Detected — connecting…"
+                            : "Not on USB — plug it in to send the network";
+                        can-send: Wireless.ssid != "";
+                        toggle-label: "WiFi input (virtual joystick)";
+                        toggle-sub: "The wireless handbrake's axis feeds a virtual joystick the game reads. Off = its own USB HID axis.";
+                        on: Wireless.hb-input-enabled;
+                        status: Wireless.hb-status;
+                        provision => { Wireless.provision-hb(); }
+                        toggled(v) => { Wireless.hb-input-enabled = v; Wireless.set-hb-input(v); }
+                    }
+                    Rectangle { height: 1px; background: Theme.line; }
+
+                    DeviceWirelessRow {
+                        name: "Pith Pedals";
+                        usb-connected: Pedals.connected;
+                        usb-status: Pedals.connected ? "On USB — ready to receive the network"
+                            : Pedals.device-found ? "Detected — connecting…"
+                            : "Not on USB — plug it in to send the network";
+                        can-send: Wireless.ssid != "";
+                        toggle-label: "WiFi input (virtual joystick)";
+                        toggle-sub: "Wireless pedals feed a virtual joystick the game reads. Off = each pedal's own USB HID axis. Credentials go to the pedal currently on USB — provision each pedal in turn.";
+                        on: Wireless.pedals-input-enabled;
+                        status: Wireless.pedal-status;
+                        provision => { Wireless.provision-pedal(); }
+                        toggled(v) => { Wireless.pedals-input-enabled = v; Wireless.set-pedals-input(v); }
+                    }
+                }
+            }
+
+            // ---- discovered wireless devices ----
+            Card {
+                VerticalLayout {
+                    padding: 20px;
+                    spacing: 10px;
+                    SectionLabel { text: "ON THE NETWORK"; }
+                    Text {
+                        text: "Pith devices announcing themselves on your network right now.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                    }
+                    if Wireless.devices.length == 0: Text {
+                        text: "None found yet — provision a device above, then give it a few seconds to join.";
+                        color: Theme.text3;
+                        font-size: 12px;
+                    }
+                    for dev in Wireless.devices: HorizontalLayout {
+                        spacing: 8px;
+                        VerticalLayout { alignment: center; Dot { tint: Theme.green; } }
+                        Mono { text: dev; font-size: 12px; vertical-alignment: center; }
+                    }
+                }
+            }
+
+            Rectangle { height: 8px; }
+        }
+    }
+}

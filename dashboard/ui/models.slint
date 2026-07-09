@@ -1,7 +1,7 @@
 // Shared structs, enums and global singletons. C++ owns the data and writes
 // these globals; the UI reads them and invokes callbacks for actions.
 
-export enum Page { overview, race, shift, cars, udp, firmware, device, handbrake, pedals }
+export enum Page { overview, race, shift, cars, udp, firmware, wireless, device, handbrake, pedals }
 
 // ---- Telemetry (live device mirror) ----
 export struct TyreCell { temp: int, col: color }
@@ -184,6 +184,12 @@ export struct NodeBox {
 export struct Pt { x: int, y: int }
 // Normalized (0..1) force-curve control point, x = travel, y = force.
 export struct CurvePt { x: float, y: float }
+// A saved pedal profile: its name + the game/car binding keys it auto-applies
+// for (comma-separated sim-id / car-substring keys, empty = manual only).
+export struct PedalProfile { name: string, binding: string }
+// One known sim in the binding editor's game-chip row; `on` = the active
+// profile's binding already carries this game's key.
+export struct GameOpt { name: string, id: string, on: bool }
 
 // One element inside the selected widget's tree (list row + inline editor fields).
 export struct ElemRow {
@@ -482,7 +488,7 @@ export global DeviceCaps {
 export global AppState {
     in-out property <Page> page: Page.overview;
     in property <string> device-name: "Pith DDU";
-    in property <string> fw-version: "v2.4.1";
+    in property <string> fw-version: "";   // set from the DDU's @CAP on connect
     in property <bool> connected: false;
     in property <string> conn-detail: "Disconnected";
     in property <int> health-pct: 0;
@@ -593,6 +599,18 @@ export global Pedals {
     // Live device state (from `?`), refreshed periodically.
     in property <int> position-pct-x10: 0;
     in property <int> force-n-x10: 0;
+
+    // ---- firmware updates (pedals-v* GitHub release stream) ----
+    // All pedal boards run the same pith-pedals image; the connected pedal
+    // reports its running version via caps, compared against the newest
+    // published pedals-v* release. In-place update over USB HID (@OTA) — same
+    // slot-flip-and-reboot path as the DDU/handbrake.
+    in property <string> fw-latest: "";          // newest published version, e.g. "v0.1.1"
+    in property <bool> update-available: false;   // fw-latest > connected fw-version
+    in property <bool> flashing: false;
+    in property <float> flash-progress: 0;        // 0..1 download + @OTA stream
+    in property <string> flash-status: "";
+    callback install-update-requested();
 
     // ---- multi-pedal (SimHub-style pedal selector) ----
     // A rig has up to three pedals (each its own board; role set by the
@@ -720,14 +738,35 @@ export global Pedals {
     // never silently changes a connected device's live behavior; the user
     // still has to hit PUSH TO DEVICE.
     in-out property <string> profile-name: "";
-    in property <[string]> profiles: [];
+    // Saved profiles with their game/car bindings, for the profile manager list.
+    in property <[PedalProfile]> profile-list: [];
+    // Name of the profile last loaded into the editor (highlighted in the list).
+    in property <string> active-profile: "";
+    // The running game's sim-id + car model (from telemetry detection), shown so
+    // the user can one-click bind a profile to whatever's running right now.
+    in property <string> detected-game: "";
+    in property <string> detected-car: "";
 
     // Auto profile switching (SimHub parity): when on, the dashboard applies
-    // the profile whose binding matches the running game/car. `profile-bind`
-    // is the binding string (comma-separated game-sim-id / car-substring
-    // keys) for the profile currently selected in the LOAD combo.
+    // the profile whose binding matches the running game/car (car matches win
+    // over game matches — more specific).
     in-out property <bool> auto-switch: false;
-    in-out property <string> profile-bind: "";
+
+    // ---- game/car binding editor for the selected profile ----
+    // A binding is a set of keys: a game's sim-id links the profile to that
+    // whole game; any other key links it to cars whose model name contains
+    // it. Rust owns the store (pedals profile-bindings file) and pushes these
+    // models; the UI only fires the callbacks below.
+    in property <string> profile-bind: "";     // raw comma-joined keys (row preview)
+    in property <[string]> bind-keys: [];       // the active profile's keys, as chips
+    // Every known sim + whether it's linked, pre-split into chip rows so the
+    // card never overflows (Slint has no wrapping flow layout).
+    in property <[[GameOpt]]> bind-games: [];
+    // Select a profile in the manager (loads its binding into the editor).
+    callback select-profile(string);
+    callback bind-toggle-game(string /*sim-id*/);   // link/unlink a game
+    callback bind-add-car(string /*car substring*/);
+    callback bind-remove-key(string);
 
     callback push-config-requested();
     callback refresh-config-requested();
@@ -735,22 +774,44 @@ export global Pedals {
     callback load-profile-requested(string);
     callback delete-profile-requested(string);
     callback set-auto-switch(bool);
-    // Save `binding` (2nd arg) as the game/car keys for profile `name` (1st).
-    callback save-binding(string, string);
-    // Fetch the stored binding string for the given profile name.
-    callback load-binding(string) -> string;
+}
 
-    // ---- WiFi transport ----
-    // When on, a wireless device's axis feeds a software virtual joystick so
-    // the game reads it with no USB cable; when off, the device's own USB HID
-    // axis is used (no virtual joystick). Config/telemetry can still go over
-    // WiFi either way.
-    in-out property <bool> wifi-input-enabled: false;
+// ---- Wireless (its own screen) ----
+// One shared set of network credentials for ALL Pith devices (each is
+// provisioned over its USB link via @WIFI and then remembers the network in
+// NVS), plus a per-hardware wireless toggle. Backed by dashboard/src/wifi.rs
+// (discovery + axis routing + DDU telemetry forwarding).
+export global Wireless {
+    // Shared network credentials (persisted locally — set them once).
+    in-out property <string> ssid: "";
+    in-out property <string> pass: "";
+    in property <string> creds-status: "";
+    callback save-credentials(string /*ssid*/, string /*pass*/);
+
+    // Send the stored credentials to a device over its USB connection.
+    // Feedback lands in the matching status line.
+    callback provision-ddu();
+    callback provision-hb();
+    callback provision-pedal();
+    in property <string> ddu-status: "";
+    in property <string> hb-status: "";
+    in property <string> pedal-status: "";
+
+    // Per-hardware wireless modes (persisted):
+    //  - DDU: forward live telemetry to wireless DDUs on the network, and/or
+    //    route its touch buttons into the virtual joystick (its 32-button box).
+    //  - Handbrake / pedals: route that kind's wireless axis into a software
+    //    virtual joystick the game reads (off = the device's own USB HID axis;
+    //    never both, to avoid double-reporting).
+    in-out property <bool> ddu-enabled: true;
+    in-out property <bool> ddu-input-enabled: false;
+    in-out property <bool> hb-input-enabled: false;
+    in-out property <bool> pedals-input-enabled: false;
+    callback set-ddu-enabled(bool);
+    callback set-ddu-input(bool);
+    callback set-hb-input(bool);
+    callback set-pedals-input(bool);
+
     // Discovered wireless devices, formatted "<kind>  <serial>  <ip>".
-    in property <[string]> wifi-devices: [];
-    // WiFi credential fields (sent to the USB-connected pedal via @WIFI).
-    in-out property <string> wifi-ssid: "";
-    in-out property <string> wifi-pass: "";
-    callback set-wifi-input(bool);
-    callback provision-wifi(string, string);
+    in property <[string]> devices: [];
 }

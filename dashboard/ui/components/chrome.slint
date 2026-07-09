@@ -54,59 +54,9 @@ export component TitleBar inherits Rectangle {
             }
         }
         Rectangle { }  // spacer
-        // device pill
-        VerticalLayout {
-            alignment: center;
-            Rectangle {
-                height: 28px;
-                border-radius: 14px;
-                background: Theme.panel;
-                border-width: 1px;
-                border-color: Theme.line;
-                HorizontalLayout {
-                    padding-left: 12px;
-                    padding-right: 12px;
-                    spacing: 8px;
-                    alignment: center;
-                    VerticalLayout { alignment: center; Dot { tint: AppState.connected ? Theme.green : Theme.text3; } }
-                    Text {
-                        text: AppState.device-name;
-                        color: Theme.text2;
-                        font-size: 12px;
-                        vertical-alignment: center;
-                    }
-                    Text {
-                        text: AppState.fw-version;
-                        color: Theme.text3;
-                        font-family: Theme.mono-font;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                    }
-                }
-            }
-        }
-        // window controls
-        for ctrl[i] in [{ g: "—", close: false }, { g: "▢", close: false }, { g: "✕", close: true }]: VerticalLayout {
-            alignment: center;
-            Rectangle {
-                width: 32px;
-                height: 32px;
-                border-radius: 6px;
-                background: ta.has-hover ? (ctrl.close ? Theme.red : Theme.panel) : transparent;
-                Text {
-                    text: ctrl.g;
-                    color: ta.has-hover && ctrl.close ? white : Theme.text2;
-                    font-size: 13px;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
-                ta := TouchArea {
-                    clicked => {
-                        if (ctrl.close) { AppState.close(); } else { AppState.minimize(); }
-                    }
-                }
-            }
-        }
+        // No window controls or per-device status up here: the OS titlebar
+        // already provides minimize/maximize/close, and device status/firmware
+        // is per-device information (the sidebar gear cards + Firmware page).
     }
 }
 
@@ -240,7 +190,8 @@ export component Sidebar inherits Rectangle {
         NavRow { glyph: "▰"; label: "Shift Lights"; active: AppState.page == Page.shift; clicked => { AppState.page = Page.shift; } }
         NavRow { glyph: "◈"; label: "Car Library"; active: AppState.page == Page.cars; clicked => { AppState.page = Page.cars; } }
         NavRow { glyph: "⇅"; label: "Telemetry UDP"; active: AppState.page == Page.udp; clicked => { AppState.page = Page.udp; } }
-        NavRow { glyph: "⬡"; label: "Firmware"; active: AppState.page == Page.firmware; dot: Firmware.update-available; clicked => { AppState.page = Page.firmware; } }
+        NavRow { glyph: "⬡"; label: "Firmware"; active: AppState.page == Page.firmware; dot: Firmware.update-available || Hb.update-available || Pedals.update-available; clicked => { AppState.page = Page.firmware; } }
+        NavRow { glyph: "≋"; label: "Wireless"; active: AppState.page == Page.wireless; clicked => { AppState.page = Page.wireless; } }
         Rectangle { }  // spacer
         // Connected-gear card list: one status card per Pith device, pinned to
         // the bottom of the sidebar. Click a card to open that device's page.
@@ -249,7 +200,7 @@ export component Sidebar inherits Rectangle {
             connected: AppState.connected;
             detail: AppState.conn-detail;
             serial: AppState.serial;
-            fw: AppState.fw-version;
+            fw: AppState.connected ? AppState.fw-version : "";
             active: AppState.page == Page.device;
             clicked => { AppState.page = Page.device; }
         }

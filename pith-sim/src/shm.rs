@@ -88,32 +88,40 @@ pub fn parse_ac_physics(b: &[u8]) -> Option<Telemetry> {
 
 /// Merge ACC `SPageFileGraphic` (`acpmf_graphics`) fields into a physics-derived
 /// `Telemetry` — this is the ONLY source of wipers / lights / session flag.
+///
+/// Gated per BLOCK, not one all-or-nothing check: AC (original) shares the
+/// struct through `flag`@1224 but its page ends before ACC's aid/wiper block
+/// @1268.., and a single `len < 1308 → return` silently dropped EVERY graphics
+/// field there — laps, lap times, and the session flag included.
 pub fn apply_acc_graphics(t: &mut Telemetry, g: &[u8]) {
-    if g.len() < 1308 {
-        return; // need through wiperLV@1304
+    if g.len() >= 252 {
+        t.laps_done = le::i32(g, 132).max(0); // completedLaps
+        t.position = le::i32(g, 136).max(0);
+        // Lap times (ms) straight from the graphics page — game data, so the
+        // current lap resets at the line (no wall-clock fallback). ACC parks
+        // "no time" at a huge sentinel, so reject anything past 30 min.
+        let lap = |o: usize| {
+            let v = le::i32(g, o);
+            if (0..30 * 60 * 1000).contains(&v) {
+                v
+            } else {
+                0
+            }
+        };
+        t.cur_lap_ms = lap(140); // iCurrentTime
+        t.last_lap_ms = lap(144); // iLastTime
+        t.best_lap_ms = lap(148); // iBestTime
+        t.track_pct = (le::f32(g, 248) * 1000.0).clamp(0.0, 1000.0) as i32; // normalizedCarPos
     }
-    t.laps_done = le::i32(g, 132).max(0); // completedLaps
-    t.position = le::i32(g, 136).max(0);
-    // Lap times (ms) straight from the graphics page — game data, so the current
-    // lap resets at the line (no wall-clock fallback). ACC parks "no time" at a
-    // huge sentinel, so reject anything past 30 min.
-    let lap = |o: usize| {
-        let v = le::i32(g, o);
-        if (0..30 * 60 * 1000).contains(&v) {
-            v
-        } else {
-            0
-        }
-    };
-    t.cur_lap_ms = lap(140); // iCurrentTime
-    t.last_lap_ms = lap(144); // iLastTime
-    t.best_lap_ms = lap(148); // iBestTime
-    t.track_pct = (le::f32(g, 248) * 1000.0).clamp(0.0, 1000.0) as i32; // normalizedCarPos
-    t.tc = le::i32(g, 1268); // TC level
-    t.abs = le::i32(g, 1280); // ABS level
-    t.headlights = (le::i32(g, 1296) > 0) as i32; // lightsStage (0 off)
-    t.wipers = le::i32(g, 1304).max(0); // wiperLV
-    t.flag = map_acc_flag(le::i32(g, 1224)); // AC_FLAG_TYPE → our flag code
+    if g.len() >= 1228 {
+        t.flag = map_acc_flag(le::i32(g, 1224)); // AC_FLAG_TYPE → our flag code
+    }
+    if g.len() >= 1308 {
+        t.tc = le::i32(g, 1268); // TC level
+        t.abs = le::i32(g, 1280); // ABS level
+        t.headlights = (le::i32(g, 1296) > 0) as i32; // lightsStage (0 off)
+        t.wipers = le::i32(g, 1304).max(0); // wiperLV
+    }
 }
 
 /// AC_FLAG_TYPE → our flag code (0 none,1 green,2 yellow,3 blue,4 white,

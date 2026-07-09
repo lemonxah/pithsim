@@ -25,6 +25,10 @@ pub const BEACON_PREFIX: &str = "PITH ";
 /// `AX <serial> <value>` — the joystick axis, value 0..=65535 (same range as
 /// the USB HID axis). Sent at the device's stream rate while subscribed.
 pub const AXIS_PREFIX: &str = "AX ";
+/// `BT <serial> <mask>` — the 32-button bitmask (the DDU's touch "button
+/// box", same bits as its USB HID report). Sent when it changes, plus a
+/// periodic refresh, while subscribed.
+pub const BUTTONS_PREFIX: &str = "BT ";
 /// `ST <serial> <text>` — device status line (the `?` reply body).
 pub const STATE_PREFIX: &str = "ST ";
 /// `RE <serial> <text>` — reply to a dashboard command.
@@ -46,6 +50,11 @@ pub fn axis_packet(serial: &str, value: u16) -> String {
     format!("{AXIS_PREFIX}{serial} {value}")
 }
 
+/// Build a buttons packet line.
+pub fn buttons_packet(serial: &str, mask: u32) -> String {
+    format!("{BUTTONS_PREFIX}{serial} {mask}")
+}
+
 /// Parsed device→dashboard packet.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DevicePacket {
@@ -57,6 +66,10 @@ pub enum DevicePacket {
     Axis {
         serial: String,
         value: u16,
+    },
+    Buttons {
+        serial: String,
+        mask: u32,
     },
     State {
         serial: String,
@@ -83,6 +96,13 @@ pub fn parse_device_packet(line: &str) -> Option<DevicePacket> {
         return Some(DevicePacket::Axis {
             serial: serial.to_string(),
             value: val.trim().parse().ok()?,
+        });
+    }
+    if let Some(rest) = line.strip_prefix(BUTTONS_PREFIX) {
+        let (serial, mask) = rest.split_once(' ')?;
+        return Some(DevicePacket::Buttons {
+            serial: serial.to_string(),
+            mask: mask.trim().parse().ok()?,
         });
     }
     if let Some(rest) = line.strip_prefix(STATE_PREFIX) {
@@ -127,6 +147,18 @@ mod tests {
             Some(DevicePacket::Axis {
                 serial: "PITHPEDAL-1".into(),
                 value: 32768,
+            })
+        );
+    }
+
+    #[test]
+    fn buttons_round_trip() {
+        let line = buttons_packet("PITH-DDU-1", 0x8000_0005);
+        assert_eq!(
+            parse_device_packet(&line),
+            Some(DevicePacket::Buttons {
+                serial: "PITH-DDU-1".into(),
+                mask: 0x8000_0005,
             })
         );
     }

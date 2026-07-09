@@ -24,6 +24,11 @@ struct Gamepad {
 
 static PAD: Mutex<Gamepad> = Mutex::new(Gamepad { mask: 0, sent: 0 });
 
+/// The current 32-button bitmask (for the WiFi transport's `BT` stream).
+pub fn mask() -> u32 {
+    PAD.lock().unwrap().mask
+}
+
 /// Hold/release `btn` explicitly (toggles / press-and-hold widgets).
 pub fn set(btn: usize, pressed: bool) {
     if btn >= N {

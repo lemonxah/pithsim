@@ -20,12 +20,16 @@ use pith_pedals_core::effects::pct_byte;
 use pith_pedals_core::protocol::{CustomVibration, PedalAction, PedalConfig, PedalId};
 
 use crate::ctx::Ctx;
+use crate::firmware::semver_cmp;
+use crate::net::http::http_download_file;
+use crate::paths::cache_dir;
+use crate::state::State;
 use crate::telemetry::{
     FIELD_ABS_ACTIVE, FIELD_G_LONG_X100, FIELD_MAX_RPM, FIELD_RPM, FIELD_SUSP_IMPACT,
     FIELD_TC_SLIP, FIELD_WHEEL_SLIP,
 };
 use crate::ui_bridge::sstr;
-use crate::{AppWindow, CurvePt, Pedals};
+use crate::{AppWindow, CurvePt, PedalProfile, Pedals};
 
 /// kg ↔ N: the config stores force in Newtons (×10); the UI works in kg like
 /// the reference plugin.
@@ -46,6 +50,9 @@ pub enum PedalsOutbound {
     PushConfig(PedalConfig),
     RefreshConfig,
     ProvisionWifi { ssid: String, password: String },
+    /// Stream this downloaded app image to the connected pedal over @OTA. Runs
+    /// on the device thread because it needs exclusive use of the HID handle.
+    OtaFile(std::path::PathBuf),
 }
 
 // ---- Per-role config slots (multi-pedal) ----
@@ -104,10 +111,113 @@ fn save_profiles(profiles: &std::collections::BTreeMap<String, PedalConfig>) -> 
     }
 }
 
-fn push_profiles_model(ui: &AppWindow, names: Vec<String>) {
-    let model: Vec<slint::SharedString> = names.into_iter().map(|n| n.into()).collect();
+/// Rebuild the profile-manager list model (name + its game/car binding) from
+/// the on-disk profiles + bindings, so the UI list always reflects the store.
+fn push_profiles(ui: &AppWindow) {
+    let profiles = load_profiles();
+    let bindings = load_bindings();
+    let rows: Vec<PedalProfile> = profiles
+        .keys()
+        .map(|name| PedalProfile {
+            name: name.clone().into(),
+            binding: bindings.get(name).cloned().unwrap_or_default().into(),
+        })
+        .collect();
     ui.global::<Pedals>()
-        .set_profiles(std::rc::Rc::new(slint::VecModel::from(model)).into());
+        .set_profile_list(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+}
+
+/// Refresh the pedal's "update available" state from the fetched pedals-v*
+/// releases (newest tag carrying a pith-pedals-*.bin) vs the version reported
+/// by the connected pedal's caps. Mirrors `hb::recompute_hb_update`.
+pub fn recompute_pedals_update(ui: &AppWindow, s: &State) {
+    let p = ui.global::<Pedals>();
+    match s.pedals_releases.first().map(|r| r.tag.clone()) {
+        Some(tag) => {
+            p.set_fw_latest(sstr(&if tag.starts_with('v') {
+                tag.clone()
+            } else {
+                format!("v{tag}")
+            }));
+            p.set_update_available(!s.pedals_fw.is_empty() && semver_cmp(&tag, &s.pedals_fw) > 0);
+        }
+        None => {
+            p.set_fw_latest(sstr(""));
+            p.set_update_available(false);
+        }
+    }
+}
+
+/// Newest pedals release's app image (`pith-pedals-<board>.bin`, streamed over
+/// @OTA), skipping the `-full` merged image (that's the ROM-bootloader path).
+fn latest_pedals_app(s: &State) -> Option<(String, String)> {
+    let rel = s.pedals_releases.first()?;
+    let url = rel
+        .pedals_bin
+        .iter()
+        .find(|(b, _)| !b.ends_with("-full"))
+        .map(|(_, u)| u.clone())?;
+    Some((rel.tag.clone(), url))
+}
+
+/// In-place pedal update over USB HID: download the newest app image, then
+/// hand it to the device thread to stream over @OTA (mirrors the handbrake).
+fn install_pedals_update(ctx: &Arc<Ctx>) {
+    let Some(ui) = ctx.ui.upgrade() else { return };
+    let p = ui.global::<Pedals>();
+    if p.get_flashing() {
+        return;
+    }
+    if !p.get_connected() {
+        p.set_flash_status(sstr("Pedal not connected over USB"));
+        return;
+    }
+    let (tag, url) = {
+        let s = ctx.lock();
+        match latest_pedals_app(&s) {
+            Some(x) => x,
+            None => {
+                p.set_flash_status(sstr("No published pedal firmware found"));
+                return;
+            }
+        }
+    };
+    p.set_flashing(true);
+    p.set_flash_progress(0.0);
+    p.set_flash_status(sstr(&format!("Downloading {tag}…")));
+
+    let ctx = ctx.clone();
+    ctx.clone().spawn(async move {
+        let out = cache_dir().join(format!("pith-pedals-{tag}.bin"));
+        let pc = ctx.clone();
+        let ok = http_download_file(&url, &out, move |frac| {
+            // download is the first quarter of the bar; the @OTA stream is the rest
+            pc.ui_run(move |u| u.global::<Pedals>().set_flash_progress(frac as f32 * 0.25));
+        })
+        .await;
+        if !ok || !out.exists() {
+            ctx.ui_run(|u| {
+                let p = u.global::<Pedals>();
+                p.set_flashing(false);
+                p.set_flash_status(sstr("Download failed"));
+            });
+            return;
+        }
+        ctx.ui_run(|u| u.global::<Pedals>().set_flash_status(sstr("Updating over USB…")));
+        ctx.send_pedals(PedalsOutbound::OtaFile(out));
+    });
+}
+
+/// Mirror the running game's sim-id + car model into the pedals globals so the
+/// profile manager can offer one-click "bind to what's running now" chips.
+fn push_detected(ctx: &Arc<Ctx>) {
+    let game = detected_game_id(ctx);
+    let car = ctx.lock().detected_model.clone();
+    ctx.ui_run(move |u| {
+        let p = u.global::<Pedals>();
+        p.set_detected_game(sstr(&game));
+        p.set_detected_car(sstr(&car));
+    });
 }
 
 // ---- Per-game/per-car auto profile switching (SimHub's
@@ -130,6 +240,68 @@ fn save_bindings(b: &std::collections::BTreeMap<String, String>) -> bool {
         Ok(json) => std::fs::write(crate::paths::pedals_profile_bindings_path(), json).is_ok(),
         Err(_) => false,
     }
+}
+
+/// A binding string's individual keys (comma-separated, trimmed, non-empty).
+fn split_keys(binding: &str) -> Vec<String> {
+    binding
+        .split(',')
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .collect()
+}
+
+/// Mirror profile `name`'s binding into the binding editor: the active-profile
+/// highlight, the raw preview string, the removable key chips, and the game
+/// chip rows (every known sim, flagged when linked). Empty `name` clears it.
+fn push_binding_ui(ctx: &Arc<Ctx>, u: &AppWindow, name: &str) {
+    let pg = u.global::<Pedals>();
+    pg.set_active_profile(sstr(name));
+    let keys = if name.is_empty() {
+        Vec::new()
+    } else {
+        split_keys(&load_bindings().get(name).cloned().unwrap_or_default())
+    };
+    pg.set_profile_bind(sstr(&keys.join(", ")));
+    let chips: Vec<slint::SharedString> = keys.iter().map(|k| k.as_str().into()).collect();
+    pg.set_bind_keys(std::rc::Rc::new(slint::VecModel::from(chips)).into());
+
+    let sims = ctx.lock().sims.clone();
+    let opts: Vec<crate::GameOpt> = sims
+        .into_iter()
+        .map(|(gname, id)| crate::GameOpt {
+            on: keys.iter().any(|k| k.eq_ignore_ascii_case(&id)),
+            name: gname.into(),
+            id: id.into(),
+        })
+        .collect();
+    // Two chip rows so ten sims never overflow the card's width.
+    let half = opts.len().div_ceil(2).max(1);
+    let rows: Vec<slint::ModelRc<crate::GameOpt>> = opts
+        .chunks(half)
+        .map(|c| slint::ModelRc::from(std::rc::Rc::new(slint::VecModel::from(c.to_vec()))))
+        .collect();
+    pg.set_bind_games(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+}
+
+/// Apply `f` to the active profile's binding keys, persist, and refresh both
+/// the binding editor and the profile list's row previews.
+fn mutate_binding(ctx: &Arc<Ctx>, u: &AppWindow, f: impl FnOnce(&mut Vec<String>)) {
+    let name = u.global::<Pedals>().get_active_profile().to_string();
+    if name.is_empty() {
+        return;
+    }
+    let mut bindings = load_bindings();
+    let mut keys = split_keys(bindings.get(&name).map(String::as_str).unwrap_or(""));
+    f(&mut keys);
+    if keys.is_empty() {
+        bindings.remove(&name);
+    } else {
+        bindings.insert(name.clone(), keys.join(", "));
+    }
+    save_bindings(&bindings);
+    push_profiles(u);
+    push_binding_ui(ctx, u, &name);
 }
 
 /// The profile whose binding best matches the current car/game, if any. Car
@@ -450,6 +622,7 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
     p.on_curve_range_changed(|| {});
 
     p.on_save_profile_requested({
+        let c = ctx.clone();
         let ui_weak = ui.as_weak();
         move |name| {
             let Some(u) = ui_weak.upgrade() else { return };
@@ -461,10 +634,11 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
             let mut profiles = load_profiles();
             profiles.insert(name.clone(), cfg);
             let ok = save_profiles(&profiles);
-            let names: Vec<String> = profiles.keys().cloned().collect();
-            push_profiles_model(&u, names);
+            push_profiles(&u);
+            // Select the just-saved profile so its game/car linking is ready.
+            push_binding_ui(&c, &u, &name);
             let msg = if ok {
-                format!("Saved profile \"{name}\"")
+                format!("Saved profile \"{name}\" — link it to a game / car below")
             } else {
                 "Failed to save profile".to_string()
             };
@@ -488,6 +662,7 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
     });
 
     p.on_delete_profile_requested({
+        let c = ctx.clone();
         let ui_weak = ui.as_weak();
         move |name| {
             let Some(u) = ui_weak.upgrade() else { return };
@@ -499,8 +674,11 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
             if bindings.remove(name.as_str()).is_some() {
                 save_bindings(&bindings);
             }
-            let names: Vec<String> = profiles.keys().cloned().collect();
-            push_profiles_model(&u, names);
+            push_profiles(&u);
+            // Deleting the selected profile closes its binding editor.
+            if u.global::<Pedals>().get_active_profile() == name {
+                push_binding_ui(&c, &u, "");
+            }
         }
     });
 
@@ -518,32 +696,58 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
         }
     });
 
-    p.on_save_binding({
+    // ---- game/car linking (binding editor) ----
+
+    p.on_select_profile({
+        let c = ctx.clone();
         let ui_weak = ui.as_weak();
-        move |name, bind| {
+        move |name| {
             let Some(u) = ui_weak.upgrade() else { return };
-            let name = name.trim().to_string();
-            if name.is_empty() {
-                return;
-            }
-            let mut bindings = load_bindings();
-            let bind = bind.trim().to_string();
-            if bind.is_empty() {
-                bindings.remove(&name);
-            } else {
-                bindings.insert(name.clone(), bind);
-            }
-            let ok = save_bindings(&bindings);
-            let msg = if ok {
-                format!("Binding saved for \"{name}\"")
-            } else {
-                "Failed to save binding".to_string()
-            };
-            u.global::<Pedals>().set_config_status(sstr(&msg));
+            push_binding_ui(&c, &u, name.trim());
         }
     });
 
-    p.on_load_binding(move |name| sstr(load_bindings().get(name.as_str()).map_or("", |s| s)));
+    p.on_bind_toggle_game({
+        let c = ctx.clone();
+        let ui_weak = ui.as_weak();
+        move |id| {
+            let Some(u) = ui_weak.upgrade() else { return };
+            mutate_binding(&c, &u, |keys| {
+                match keys.iter().position(|k| k.eq_ignore_ascii_case(&id)) {
+                    Some(i) => {
+                        keys.remove(i);
+                    }
+                    None => keys.push(id.to_string()),
+                }
+            });
+        }
+    });
+
+    p.on_bind_add_car({
+        let c = ctx.clone();
+        let ui_weak = ui.as_weak();
+        move |car| {
+            let Some(u) = ui_weak.upgrade() else { return };
+            let car = car.trim().to_string();
+            if car.is_empty() {
+                return;
+            }
+            mutate_binding(&c, &u, |keys| {
+                if !keys.iter().any(|k| k.eq_ignore_ascii_case(&car)) {
+                    keys.push(car);
+                }
+            });
+        }
+    });
+
+    p.on_bind_remove_key({
+        let c = ctx.clone();
+        let ui_weak = ui.as_weak();
+        move |key| {
+            let Some(u) = ui_weak.upgrade() else { return };
+            mutate_binding(&c, &u, |keys| keys.retain(|k| k != key.as_str()));
+        }
+    });
 
     // ---- multi-pedal selector ----
     // Save the editor into the outgoing role's slot, then load the incoming
@@ -567,39 +771,24 @@ pub fn wire_pedals_callbacks(ui: &AppWindow, ctx: &Arc<Ctx>) {
         }
     });
 
-    // ---- WiFi transport ----
-
-    p.on_set_wifi_input({
+    // ---- firmware update ----
+    p.on_install_update_requested({
         let c = ctx.clone();
-        move |on| {
-            let mut s = c.lock();
-            s.wifi_input_enabled = on;
-            crate::persist::save_udp_cfg(&s);
-        }
+        move || install_pedals_update(&c)
     });
 
-    p.on_provision_wifi({
-        let c = ctx.clone();
-        move |ssid, password| {
-            let ssid = ssid.trim().to_string();
-            if ssid.is_empty() {
-                return;
-            }
-            c.send_pedals(PedalsOutbound::ProvisionWifi {
-                ssid,
-                password: password.to_string(),
-            });
-        }
-    });
-    // Reflect the persisted WiFi-mode + auto-switch flags into the UI.
-    {
-        let s = ctx.lock();
-        p.set_wifi_input_enabled(s.wifi_input_enabled);
-        p.set_auto_switch(s.pedals_auto_switch);
+    // (WiFi provisioning + input mode moved to the Wireless screen —
+    // see crate::wireless.)
+
+    // Reflect the persisted auto-switch flag into the UI.
+    p.set_auto_switch(ctx.lock().pedals_auto_switch);
+
+    push_profiles(ui);
+    // Pre-select the first saved profile so the game/car linking editor is
+    // visible without an extra click.
+    if let Some(first) = load_profiles().keys().next().cloned() {
+        push_binding_ui(ctx, ui, &first);
     }
-
-    let names: Vec<String> = load_profiles().keys().cloned().collect();
-    push_profiles_model(ui, names);
     p.set_device_found(device_present(PITH_VID, PID_PEDALS));
 
     // Seed the curve editor from the default config so the plot has a shape
@@ -808,6 +997,7 @@ pub fn pedals_device_loop(ctx: Arc<Ctx>) {
                 ctx.ui_run(move |u| {
                     u.global::<Pedals>().set_device_found(found);
                 });
+                push_detected(&ctx);
                 if found {
                     try_connect(&ctx, &mut dev);
                 }
@@ -851,7 +1041,7 @@ pub fn pedals_device_loop(ctx: Arc<Ctx>) {
                         Ok(()) => format!("WiFi credentials sent for \"{ssid}\""),
                         Err(e) => format!("WiFi provisioning failed: {e}"),
                     };
-                    ctx.ui_run(move |u| u.global::<Pedals>().set_config_status(sstr(&msg)));
+                    ctx.ui_run(move |u| u.global::<crate::Wireless>().set_pedal_status(sstr(&msg)));
                 }
                 PedalsOutbound::RefreshConfig => {
                     if let Some(cfg) = dev.get_config() {
@@ -861,6 +1051,10 @@ pub fn pedals_device_loop(ctx: Arc<Ctx>) {
                                 .set_config_status(sstr("Refreshed from device"));
                         });
                     }
+                }
+                PedalsOutbound::OtaFile(path) => {
+                    flash_pedal_ota(&ctx, &mut dev, &path);
+                    continue; // link was torn down for the reboot; rescan next loop
                 }
             }
         }
@@ -892,6 +1086,7 @@ pub fn pedals_device_loop(ctx: Arc<Ctx>) {
                 });
             }
             maybe_auto_switch(&ctx, &mut dev);
+            push_detected(&ctx);
         }
 
         std::thread::sleep(Duration::from_millis(5));
@@ -947,8 +1142,8 @@ fn wireless_pedal_serial(ctx: &Ctx) -> Option<String> {
     ctx.lock()
         .wifi_devices
         .iter()
-        .find(|(kind, _, _)| kind == "pedals")
-        .map(|(_, serial, _)| serial.clone())
+        .find(|(kind, ..)| kind == "pedals")
+        .map(|(_, serial, ..)| serial.clone())
 }
 
 /// Route a user command to a wireless-only pedal over UDP. Replies come back
@@ -975,16 +1170,92 @@ fn handle_outbox_wireless(ctx: &Arc<Ctx>, serial: &str, cmd: PedalsOutbound) {
             });
         }
         PedalsOutbound::RefreshConfig => {
-            // The reply routing for a full config JSON over UDP lands with
-            // the multi-pedal work; over WiFi we surface the status line
-            // instead of silently doing nothing.
-            ctx.ui_run(|u| {
-                u.global::<Pedals>().set_config_status(sstr(
-                    "Refresh over WiFi not supported yet — connect USB to pull the config",
-                ));
+            // @GETCFG over the WiFi request/reply bridge — same config JSON
+            // the USB path pulls, adopted into the matching role slot.
+            let reply = crate::wifi::request(ctx, serial, "@GETCFG", Duration::from_millis(800));
+            let cfg = reply.as_deref().and_then(|text| {
+                let body = text.strip_prefix("OK").map(str::trim_start)?;
+                serde_json::from_str::<PedalConfig>(body).ok()
             });
+            match cfg {
+                Some(cfg) => {
+                    adopt_device_config(ctx, &cfg);
+                    ctx.ui_run(|u| {
+                        u.global::<Pedals>()
+                            .set_config_status(sstr("Refreshed from device (WiFi)"));
+                    });
+                }
+                None => ctx.ui_run(|u| {
+                    u.global::<Pedals>()
+                        .set_config_status(sstr("Refresh over WiFi failed — device didn't reply"));
+                }),
+            }
+        }
+        PedalsOutbound::OtaFile(path) => {
+            // Firmware update over the air: same @OTAWIFI TCP pull the
+            // handbrake/DDU use.
+            match std::fs::read(&path) {
+                Ok(image) => {
+                    ctx.send_wifi(crate::wifi::WifiOut::Ota {
+                        serial: serial.to_string(),
+                        image,
+                    });
+                    ctx.ui_run(|u| {
+                        let p = u.global::<Pedals>();
+                        p.set_flashing(false);
+                        p.set_flash_status(sstr("Update sent over WiFi — pedal will flash + reboot"));
+                    });
+                }
+                Err(e) => {
+                    let msg = format!("Update failed: read image: {e}");
+                    ctx.ui_run(move |u| {
+                        let p = u.global::<Pedals>();
+                        p.set_flashing(false);
+                        p.set_flash_status(sstr(&msg));
+                    });
+                }
+            }
         }
     }
+}
+
+/// Read the downloaded image and stream it to the pedal over @OTA, driving the
+/// flash-progress bar. On success the device flips slots + reboots, so we drop
+/// our handle and let the presence scan reconnect to the new firmware.
+fn flash_pedal_ota(ctx: &Arc<Ctx>, dev: &mut PedalsDev, path: &std::path::Path) {
+    let img = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(e) => {
+            let msg = format!("Update failed: read image: {e}");
+            ctx.ui_run(move |u| {
+                let p = u.global::<Pedals>();
+                p.set_flashing(false);
+                p.set_flash_status(sstr(&msg));
+            });
+            return;
+        }
+    };
+    let pc = ctx.clone();
+    // download was the first quarter of the bar; the @OTA stream is the rest.
+    let r = dev.ota_upload(&img, move |pct| {
+        let frac = 0.25 + (pct as f32 / 100.0) * 0.75;
+        pc.ui_run(move |u| u.global::<Pedals>().set_flash_progress(frac));
+    });
+    dev.close();
+    clear_pedal_connected(ctx);
+    let ok = r.is_ok();
+    let msg = match r {
+        Ok(()) => "Update installed — pedal is rebooting".to_string(),
+        Err(e) => format!("Update failed: {e}"),
+    };
+    ctx.ui_run(move |u| {
+        let p = u.global::<Pedals>();
+        p.set_flashing(false);
+        p.set_flash_progress(if ok { 1.0 } else { 0.0 });
+        p.set_flash_status(sstr(&msg));
+        p.set_connected(false);
+        p.set_conn_detail(sstr("Rebooting into the new firmware…"));
+    });
 }
 
 fn try_connect(ctx: &Arc<Ctx>, dev: &mut PedalsDev) {
@@ -999,6 +1270,9 @@ fn try_connect(ctx: &Arc<Ctx>, dev: &mut PedalsDev) {
             let board = get("board");
             let fw = get("fw");
             let serial = get("serial");
+            // Remember the running version for update checks against pedals-v*.
+            ctx.lock().pedals_fw = fw.clone();
+            let c2 = ctx.clone();
             ctx.ui_run(move |u| {
                 let p = u.global::<Pedals>();
                 p.set_board(sstr(&board));
@@ -1006,6 +1280,7 @@ fn try_connect(ctx: &Arc<Ctx>, dev: &mut PedalsDev) {
                 p.set_serial(sstr(&serial));
                 p.set_connected(true);
                 p.set_conn_detail(sstr(""));
+                recompute_pedals_update(&u, &c2.lock());
             });
             if let Some(cfg) = dev.get_config() {
                 // Adopting switches the editor to this pedal's role and marks

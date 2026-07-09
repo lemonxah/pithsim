@@ -48,6 +48,7 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
         // version reads + compares like the device's `X.Y.Z` from @CAP.
         let mut rels: Vec<FwRelease> = Vec::new();
         let mut hb_rels: Vec<FwRelease> = Vec::new();
+        let mut pedals_rels: Vec<FwRelease> = Vec::new();
         if let Ok(j) = serde_json::from_str::<Value>(&body) {
             if let Some(arr) = j.as_array() {
                 for r in arr {
@@ -55,17 +56,23 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                         continue;
                     }
                     let raw_tag = r.get("tag_name").and_then(|x| x.as_str()).unwrap_or("");
-                    let (is_hb, tag) = if let Some(t) = raw_tag.strip_prefix("handbrake-") {
-                        (true, t)
-                    } else if let Some(t) = raw_tag.strip_prefix("ddu-") {
-                        (false, t)
-                    } else {
-                        continue; // dashboard-v* etc.
-                    };
+                    // Each device firmwares on its own release stream, told apart
+                    // by tag prefix; the asset filename prefix identifies the bin.
+                    let (stream, asset_prefix, tag) =
+                        if let Some(t) = raw_tag.strip_prefix("handbrake-") {
+                            ("hb", "pith-hb-", t)
+                        } else if let Some(t) = raw_tag.strip_prefix("pedals-") {
+                            ("pedals", "pith-pedals-", t)
+                        } else if let Some(t) = raw_tag.strip_prefix("ddu-") {
+                            ("ddu", "pithddu-", t)
+                        } else {
+                            continue; // dashboard-v* etc.
+                        };
                     let mut fr = FwRelease {
                         tag: tag.to_string(),
                         board_bin: Default::default(),
                         hb_bin: Default::default(),
+                        pedals_bin: Default::default(),
                     };
                     if let Some(assets) = r.get("assets").and_then(|a| a.as_array()) {
                         for a in assets {
@@ -78,32 +85,28 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                                 .and_then(|x| x.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            if is_hb {
-                                if let Some(board) = name
-                                    .strip_prefix("pith-hb-")
-                                    .and_then(|b| b.strip_suffix(".bin"))
-                                {
-                                    if !board.is_empty() {
-                                        fr.hb_bin.insert(board.to_string(), url);
-                                    }
-                                }
-                            } else if let Some(board) = name
-                                .strip_prefix("pithddu-")
+                            let Some(board) = name
+                                .strip_prefix(asset_prefix)
                                 .and_then(|b| b.strip_suffix(".bin"))
-                            {
-                                if !board.is_empty() {
-                                    fr.board_bin.insert(board.to_string(), url);
-                                }
-                            }
+                                .filter(|b| !b.is_empty())
+                            else {
+                                continue;
+                            };
+                            match stream {
+                                "hb" => fr.hb_bin.insert(board.to_string(), url),
+                                "pedals" => fr.pedals_bin.insert(board.to_string(), url),
+                                _ => fr.board_bin.insert(board.to_string(), url),
+                            };
                         }
                     }
                     if fr.tag.is_empty() {
                         continue;
                     }
-                    if is_hb && !fr.hb_bin.is_empty() {
-                        hb_rels.push(fr);
-                    } else if !is_hb && !fr.board_bin.is_empty() {
-                        rels.push(fr);
+                    match stream {
+                        "hb" if !fr.hb_bin.is_empty() => hb_rels.push(fr),
+                        "pedals" if !fr.pedals_bin.is_empty() => pedals_rels.push(fr),
+                        "ddu" if !fr.board_bin.is_empty() => rels.push(fr),
+                        _ => {}
                     }
                 }
             }
@@ -116,6 +119,9 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
                 .sort_by(|a, b| semver_cmp(&b.tag, &a.tag).cmp(&0));
             s.hb_releases = hb_rels;
             s.hb_releases
+                .sort_by(|a, b| semver_cmp(&b.tag, &a.tag).cmp(&0));
+            s.pedals_releases = pedals_rels;
+            s.pedals_releases
                 .sort_by(|a, b| semver_cmp(&b.tag, &a.tag).cmp(&0));
             let fw = u.global::<Firmware>();
             let labels: Vec<slint::SharedString> = s
@@ -144,6 +150,7 @@ pub fn fetch_firmware_releases(ctx: &Arc<Ctx>) {
             update_release_board_match(&u, &s);
             recompute_update_available(&u, &s);
             crate::hb::recompute_hb_update(&u, &s);
+            crate::pedals::recompute_pedals_update(&u, &s);
         });
     });
 }

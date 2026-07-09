@@ -17,21 +17,34 @@
 /// Up to this many axes on the virtual device (throttle/brake/clutch +
 /// handbrake + headroom).
 pub const MAX_AXES: usize = 8;
+/// Buttons on the virtual device — matches the DDU's 32-button HID "button
+/// box" so a wireless DDU's touch buttons map 1:1.
+pub const MAX_BUTTONS: usize = 32;
 
 #[cfg(target_os = "linux")]
 mod imp {
     use std::io;
     use std::os::fd::RawFd;
 
-    use super::MAX_AXES;
+    use super::{MAX_AXES, MAX_BUTTONS};
 
     // --- Linux input/uinput constants (stable kernel ABI) ---
     const EV_SYN: u16 = 0x00;
     const EV_KEY: u16 = 0x01;
     const EV_ABS: u16 = 0x03;
     const SYN_REPORT: u16 = 0x00;
-    const BTN_JOYSTICK: u16 = 0x120; // one button so it's classed as a joystick
-                                     // ABS axis codes, in the order we assign them to logical axes 0..MAX_AXES.
+    const BTN_JOYSTICK: u16 = 0x120; // 0x120..=0x12F: the 16 joystick buttons
+    const BTN_TRIGGER_HAPPY: u16 = 0x2C0; // 0x2C0…: extra buttons 17..=32
+    /// Key code for logical button `i` (0-based): the 16 joystick codes, then
+    /// the TRIGGER_HAPPY range — the standard layout for >16-button boxes.
+    const fn btn_code(i: usize) -> u16 {
+        if i < 16 {
+            BTN_JOYSTICK + i as u16
+        } else {
+            BTN_TRIGGER_HAPPY + (i - 16) as u16
+        }
+    }
+    // ABS axis codes, in the order we assign them to logical axes 0..MAX_AXES.
     const ABS_CODES: [u16; MAX_AXES] = [
         0x00, // ABS_X
         0x01, // ABS_Y
@@ -129,9 +142,11 @@ mod imp {
         }
 
         fn configure(&self, name: &str) -> io::Result<()> {
-            // Enable a button (required for joystick classification) + axes.
+            // Enable the buttons (≥1 required for joystick classification) + axes.
             self.ioctl_val(ui_set_evbit(), EV_KEY as libc::c_int)?;
-            self.ioctl_val(ui_set_keybit(), BTN_JOYSTICK as libc::c_int)?;
+            for i in 0..MAX_BUTTONS {
+                self.ioctl_val(ui_set_keybit(), btn_code(i) as libc::c_int)?;
+            }
             self.ioctl_val(ui_set_evbit(), EV_ABS as libc::c_int)?;
             for &code in ABS_CODES.iter().take(self.axes) {
                 self.ioctl_val(ui_set_absbit(), code as libc::c_int)?;
@@ -204,6 +219,15 @@ mod imp {
             self.emit(EV_SYN, SYN_REPORT, 0)
         }
 
+        /// Press/release logical button `idx` (0-based, < MAX_BUTTONS) and flush.
+        pub fn set_button(&self, idx: usize, pressed: bool) -> io::Result<()> {
+            if idx >= MAX_BUTTONS {
+                return Ok(());
+            }
+            self.emit(EV_KEY, btn_code(idx), pressed as i32)?;
+            self.emit(EV_SYN, SYN_REPORT, 0)
+        }
+
         /// Axis count (for a future UI axis-mapping view).
         #[allow(dead_code)]
         pub fn axes(&self) -> usize {
@@ -237,6 +261,9 @@ mod imp {
             })
         }
         pub fn set_axis(&self, _axis: usize, _value: u16) -> io::Result<()> {
+            Ok(())
+        }
+        pub fn set_button(&self, _idx: usize, _pressed: bool) -> io::Result<()> {
             Ok(())
         }
         #[allow(dead_code)]

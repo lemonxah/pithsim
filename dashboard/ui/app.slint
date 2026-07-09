@@ -22,12 +22,13 @@ import { ShiftScreen } from "screens/shift-lights.slint";
 import { CarsScreen } from "screens/car-library.slint";
 import { UdpScreen } from "screens/udp.slint";
 import { FirmwareScreen } from "screens/firmware.slint";
+import { WirelessScreen } from "screens/wireless.slint";
 import { DeviceConfigScreen } from "screens/device.slint";
 import { HandbrakeScreen } from "screens/handbrake.slint";
 import { PedalsScreen } from "screens/pedals.slint";
 
 // Re-export globals so C++ can reach them via the generated header.
-export { AppState, Telemetry, TelemetryUdp, ShiftCfg, Buttons, RaceLayout, CarLib, Firmware, DeviceCaps, DeviceCfg, DeviceLog, Hb, Pedals } from "models.slint";
+export { AppState, Telemetry, TelemetryUdp, ShiftCfg, Buttons, RaceLayout, CarLib, Firmware, DeviceCaps, DeviceCfg, DeviceLog, Hb, Pedals, Wireless } from "models.slint";
 
 export component AppWindow inherits Window {
     title: "Pith Dashboard";
@@ -45,50 +46,22 @@ export component AppWindow inherits Window {
 
     VerticalLayout {
         TitleBar { }
-        // Body. The sidebar always works (other Pith gear must stay reachable);
-        // the DDU pages are disabled until the DDU is connected (the overlay
-        // swallows their input + dims them). The handbrake page manages its own
-        // device connection, so it is exempt from the DDU gate.
         HorizontalLayout {
             Sidebar { }
             Rectangle {
-                property <bool> ddu-gated: !AppState.connected && AppState.page != Page.handbrake && AppState.page != Page.pedals;
                 // content router
                 Rectangle {
                     background: Theme.bg;
-                    opacity: parent.ddu-gated ? 0.35 : 1.0;
                     if AppState.page == Page.overview: OverviewScreen { }
                     if AppState.page == Page.race: RaceScreen { }
                     if AppState.page == Page.shift: ShiftScreen { }
                     if AppState.page == Page.cars: CarsScreen { }
                     if AppState.page == Page.udp: UdpScreen { }
                     if AppState.page == Page.firmware: FirmwareScreen { }
+                    if AppState.page == Page.wireless: WirelessScreen { }
                     if AppState.page == Page.device: DeviceConfigScreen { }
                     if AppState.page == Page.handbrake: HandbrakeScreen { }
                     if AppState.page == Page.pedals: PedalsScreen { }
-                }
-                // "no DDU" gate — blocks interaction with the DDU pages while
-                // the DDU is disconnected.
-                if ddu-gated: Rectangle {
-                    background: Theme.bg.with-alpha(0.55);
-                    // catch every pointer event so nothing underneath is clickable
-                    TouchArea { }
-                    Rectangle {
-                        width: min(440px, parent.width - 80px);
-                        height: 150px;
-                        background: Theme.panel;
-                        border-radius: Theme.radius-card;
-                        border-width: 1px;
-                        border-color: Theme.line2;
-                        VerticalLayout {
-                            alignment: center;
-                            spacing: 8px;
-                            padding: 24px;
-                            Text { text: "No device connected"; color: Theme.text; font-family: Theme.display-font; font-size: 22px; font-weight: 700; horizontal-alignment: center; }
-                            Text { text: "Connect your Pith DDU over USB to edit and push settings."; color: Theme.text3; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
-                            Text { text: AppState.conn-detail; color: Theme.text2; font-family: Theme.mono-font; font-size: 11px; horizontal-alignment: center; }
-                        }
-                    }
                 }
             }
         }

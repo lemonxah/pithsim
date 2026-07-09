@@ -84,6 +84,7 @@ fn main() {
                 pith_fw_wifi::WifiOpts {
                     kind: "handbrake",
                     stream_axis: true,
+                    stream_buttons: false,
                     ota: Some(pith_fw_wifi::OtaHooks {
                         begin: ota::begin,
                         feed: ota::feed,

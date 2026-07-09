@@ -211,6 +211,7 @@ fn init_impl(ui: &AppWindow, rt: &tokio::runtime::Runtime, live: bool) -> Arc<Ct
     crate::callbacks::wire_callbacks(ui, &ctx);
     crate::hb::wire_hb_callbacks(ui, &ctx);
     crate::pedals::wire_pedals_callbacks(ui, &ctx);
+    crate::wireless::wire_wireless_callbacks(ui, &ctx);
 
     // Screenshot/headless mode stops here: no network, no background loops.
     if !live {

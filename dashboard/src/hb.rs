@@ -50,6 +50,9 @@ pub enum HbOutbound {
     Save,
     Cancel,
     Reset,
+    /// Send WiFi credentials over USB (@WIFI) — the device stores them in NVS
+    /// and joins the network on its own (see the Wireless screen).
+    ProvisionWifi { ssid: String, password: String },
     /// Stream this downloaded app image to the device over @OTA. Runs on the
     /// device thread because it needs exclusive use of the HID handle.
     OtaFile(std::path::PathBuf),
@@ -171,7 +174,7 @@ fn install_hb_update(ctx: &Arc<Ctx>) {
             .lock()
             .wifi_devices
             .iter()
-            .any(|(kind, _, _)| kind == "handbrake");
+            .any(|(kind, ..)| kind == "handbrake");
         if !wireless {
             hb.set_flash_status(sstr("Handbrake not connected (USB or WiFi)"));
             return;
@@ -387,6 +390,15 @@ pub fn hb_device_loop(ctx: Arc<Ctx>) {
                 if found {
                     try_connect(&ctx, &mut dev);
                 }
+                // Still no USB handbrake, but one is on the network → run the
+                // whole page over the WiFi request/reply bridge. Everything
+                // USB can do works here too; USB takes over when plugged in.
+                if !dev.is_open() {
+                    if let Some((serial, ip, _fw)) = wireless_hb(&ctx) {
+                        wifi_session(&ctx, &mut auto_cal, &serial, &ip);
+                        continue;
+                    }
+                }
             }
             // No USB handbrake. A queued OTA can still go out over WiFi if
             // the device is on the network (pith-fw-wifi's @OTAWIFI TCP
@@ -396,8 +408,8 @@ pub fn hb_device_loop(ctx: Arc<Ctx>) {
                     .lock()
                     .wifi_devices
                     .iter()
-                    .find(|(kind, _, _)| kind == "handbrake")
-                    .map(|(_, serial, _)| serial.clone());
+                    .find(|(kind, ..)| kind == "handbrake")
+                    .map(|(_, serial, ..)| serial.clone());
                 match (wireless, std::fs::read(&path)) {
                     (Some(serial), Ok(image)) => {
                         ctx.send_wifi(crate::wifi::WifiOut::Ota { serial, image });
@@ -597,6 +609,13 @@ fn handle_command(ctx: &Arc<Ctx>, dev: &mut Handbrake, auto_cal: &mut AutoCal, c
             }
             set_page(ctx, HbPage::AutoCalibrate);
         }
+        HbOutbound::ProvisionWifi { ssid, password } => {
+            let msg = match dev.provision_wifi(&ssid, &password) {
+                Ok(()) => format!("WiFi credentials sent for \"{ssid}\""),
+                Err(e) => format!("WiFi provisioning failed: {e}"),
+            };
+            ctx.ui_run(move |u| u.global::<crate::Wireless>().set_hb_status(sstr(&msg)));
+        }
         HbOutbound::OtaFile(path) => {
             let img = match std::fs::read(&path) {
                 Ok(b) => b,
@@ -641,6 +660,255 @@ fn finish_flash(ctx: &Arc<Ctx>, r: Result<(), String>) {
         hb.set_flash_progress(if ok { 1.0 } else { 0.0 });
         hb.set_flash_status(sstr(&msg));
     });
+}
+
+// ---- wireless mode (the same page, over the WiFi request/reply bridge) ----
+
+/// How long to wait for one wireless command's reply. LAN round-trips are
+/// single-digit ms; the margin covers a busy radio.
+const WIFI_CMD_TIMEOUT: Duration = Duration::from_millis(800);
+/// `?` status poll rate over WiFi — drives the monitor + auto-cal learning.
+const WIFI_POLL_INTERVAL: Duration = Duration::from_millis(120);
+
+/// The wireless handbrake on the network, if any: (serial, ip, fw).
+fn wireless_hb(ctx: &Ctx) -> Option<(String, String, String)> {
+    ctx.lock()
+        .wifi_devices
+        .iter()
+        .find(|(kind, ..)| kind == "handbrake")
+        .map(|(_, serial, ip, fw)| (serial.clone(), ip.clone(), fw.clone()))
+}
+
+/// Send one protocol line to the wireless handbrake and parse the `OK`/`ERR`
+/// reply — the WiFi twin of `pith_device::Handbrake::command`.
+fn wreq(ctx: &Arc<Ctx>, serial: &str, line: &str) -> Result<String, String> {
+    let text = crate::wifi::request(ctx, serial, line, WIFI_CMD_TIMEOUT)
+        .ok_or_else(|| "timeout".to_string())?;
+    match proto::parse_reply_line(&text) {
+        Some(proto::Reply::Ok(data)) => Ok(data),
+        Some(proto::Reply::Err(code)) => Err(code),
+        None => Err(format!("bad reply: {text}")),
+    }
+}
+
+fn wstatus(ctx: &Arc<Ctx>, serial: &str) -> Option<pith_device::handbrake::Status> {
+    wreq(ctx, serial, "?")
+        .ok()
+        .and_then(|d| pith_device::handbrake::Status::parse(&d))
+}
+
+/// Run the handbrake page over WiFi until the device leaves the network, a
+/// USB handbrake appears (preferred: lower latency + OTA streaming), or the
+/// app exits. Mirrors the USB flow exactly — same pages, same commands, same
+/// auto-calibration — just fed by `?` polls instead of the HID telemetry
+/// stream.
+fn wifi_session(ctx: &Arc<Ctx>, auto_cal: &mut AutoCal, serial: &str, ip: &str) {
+    // @CAP first — proves the command channel before claiming "connected".
+    let Ok(cap) = wreq(ctx, serial, "@CAP") else {
+        return; // discovered but not answering commands; retry next scan
+    };
+    apply_caps(ctx, &parse_kv_owned(&cap));
+    let detail = format!("WiFi · {ip}");
+    ctx.ui_run(move |u| u.global::<Hb>().set_conn_detail(sstr(&detail)));
+    if let Some(st) = wstatus(ctx, serial) {
+        let next = if st.calibrated {
+            HbPage::Monitor
+        } else {
+            HbPage::AutoCalibrate
+        };
+        push_status(ctx, st);
+        set_page(ctx, next);
+    }
+
+    let mut misses = 0u32;
+    let mut last_poll = Instant::now();
+    while ctx.running.load(Ordering::SeqCst) {
+        // Leave for USB the moment a cable shows up, or when the device
+        // stops beaconing (it fell off the network).
+        if device_present(PITH_VID, PID_HANDBRAKE) {
+            break;
+        }
+        if wireless_hb(ctx).map(|(s, ..)| s) != Some(serial.to_string()) {
+            break;
+        }
+        if let Some(cmd) = take_outbox(ctx, Duration::from_millis(30)) {
+            wifi_command(ctx, serial, auto_cal, cmd);
+            continue;
+        }
+        if last_poll.elapsed() >= WIFI_POLL_INTERVAL {
+            last_poll = Instant::now();
+            match wstatus(ctx, serial) {
+                Some(st) => {
+                    misses = 0;
+                    wifi_on_status(ctx, serial, auto_cal, st);
+                }
+                None => {
+                    misses += 1;
+                    if misses >= MISS_LIMIT {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Session over: mirror the USB disconnect UI (unless the app is exiting).
+    auto_cal.active = false;
+    ctx.ui_run(|u| {
+        let hb = u.global::<Hb>();
+        hb.set_connected(false);
+        hb.set_conn_detail(sstr("Disconnected"));
+        hb.set_learn_active(false);
+        hb.set_page(HbPage::Connect);
+    });
+}
+
+/// `@CAP` reply body → owned key=value pairs (`apply_caps` input).
+fn parse_kv_owned(data: &str) -> Vec<(String, String)> {
+    proto::parse_kv(data)
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+/// `handle_command`, over the WiFi bridge — one arm per `HbOutbound`, same
+/// UI/page transitions as USB.
+fn wifi_command(ctx: &Arc<Ctx>, serial: &str, auto_cal: &mut AutoCal, cmd: HbOutbound) {
+    clear_error(ctx);
+    let refresh = |ctx: &Arc<Ctx>| {
+        if let Some(st) = wstatus(ctx, serial) {
+            push_status(ctx, st);
+        }
+    };
+    match cmd {
+        HbOutbound::StartAutoCal => {
+            auto_cal.restart();
+            ctx.ui_run(|u| {
+                let hb = u.global::<Hb>();
+                hb.set_learn_active(true);
+                hb.set_learn_min(0);
+                hb.set_learn_max(0);
+                hb.set_learn_remaining_s(AUTO_CAL_DURATION.as_secs() as i32);
+                hb.set_learn_progress(0.0);
+            });
+        }
+        HbOutbound::CancelAutoCal => {
+            auto_cal.active = false;
+            ctx.ui_run(|u| {
+                u.global::<Hb>().set_learn_active(false);
+            });
+            set_page(ctx, HbPage::Monitor);
+        }
+        HbOutbound::SetDeadzone(lo, hi) => {
+            let _ = wreq(ctx, serial, &format!("@DZ{lo},{hi}"));
+            refresh(ctx);
+        }
+        HbOutbound::SetInverted(inverted) => {
+            let _ = wreq(ctx, serial, &format!("@INV{}", inverted as u8));
+            refresh(ctx);
+        }
+        HbOutbound::Save => match wreq(ctx, serial, "@SAVE") {
+            Ok(_) => {
+                refresh(ctx);
+                set_page(ctx, HbPage::Done);
+            }
+            Err(_) => set_error(ctx, "save failed"),
+        },
+        HbOutbound::Cancel => {
+            let _ = wreq(ctx, serial, "@CANCEL");
+            refresh(ctx);
+            set_page(ctx, HbPage::Monitor);
+        }
+        HbOutbound::Reset => {
+            let _ = wreq(ctx, serial, "@RESET");
+            refresh(ctx);
+            set_page(ctx, HbPage::AutoCalibrate);
+        }
+        HbOutbound::ProvisionWifi { ssid, password } => {
+            let msg = match wreq(ctx, serial, &format!("@WIFI {ssid} {password}")) {
+                Ok(_) => format!("WiFi credentials sent for \"{ssid}\""),
+                Err(e) => format!("WiFi provisioning failed: {e}"),
+            };
+            ctx.ui_run(move |u| u.global::<crate::Wireless>().set_hb_status(sstr(&msg)));
+        }
+        HbOutbound::OtaFile(path) => match std::fs::read(&path) {
+            Ok(image) => {
+                ctx.send_wifi(crate::wifi::WifiOut::Ota {
+                    serial: serial.to_string(),
+                    image,
+                });
+                finish_flash(ctx, Ok(()));
+            }
+            Err(e) => finish_flash(ctx, Err(format!("read image: {e}"))),
+        },
+    }
+}
+
+/// `on_telem`'s twin for WiFi: drive the monitor + the auto-calibration learn
+/// window from `?` status polls, finishing with @SETIDLE/@SETMAX over the
+/// bridge.
+fn wifi_on_status(
+    ctx: &Arc<Ctx>,
+    serial: &str,
+    auto_cal: &mut AutoCal,
+    st: pith_device::handbrake::Status,
+) {
+    if !auto_cal.active {
+        push_status(ctx, st);
+        return;
+    }
+    let (raw, pct) = (st.raw, st.pct_x10 as i32);
+    if auto_cal.first.is_none() {
+        auto_cal.first = Some(raw);
+    }
+    auto_cal.lo = auto_cal.lo.min(raw);
+    auto_cal.hi = auto_cal.hi.max(raw);
+
+    let elapsed = auto_cal.start.elapsed();
+    if elapsed < AUTO_CAL_DURATION {
+        let remaining_s = (AUTO_CAL_DURATION - elapsed).as_secs_f32().ceil() as i32;
+        let progress = elapsed.as_secs_f32() / AUTO_CAL_DURATION.as_secs_f32();
+        let (lo, hi) = (auto_cal.lo, auto_cal.hi);
+        ctx.ui_run(move |u| {
+            let hb = u.global::<Hb>();
+            hb.set_raw(raw);
+            hb.set_pct_x10(pct);
+            hb.set_learn_min(lo);
+            hb.set_learn_max(hi);
+            hb.set_learn_remaining_s(remaining_s);
+            hb.set_learn_progress(progress);
+        });
+        return;
+    }
+
+    // Window's up — same closer-to-first-sample idle/max resolution as USB.
+    let first = auto_cal.first.unwrap_or(raw);
+    let (lo, hi) = (auto_cal.lo, auto_cal.hi);
+    let (idle, max_raw) = if (first - lo).abs() <= (first - hi).abs() {
+        (lo, hi)
+    } else {
+        (hi, lo)
+    };
+    let result = wreq(ctx, serial, &format!("@SETIDLE{idle}"))
+        .and_then(|_| wreq(ctx, serial, &format!("@SETMAX{max_raw}")).map(|_| ()));
+    match result {
+        Ok(()) => {
+            auto_cal.active = false;
+            ctx.ui_run(|u| {
+                u.global::<Hb>().set_learn_active(false);
+            });
+            if let Some(st) = wstatus(ctx, serial) {
+                push_status(ctx, st);
+            }
+            set_page(ctx, HbPage::Deadzone);
+            clear_error(ctx);
+        }
+        Err(code) => {
+            // Not enough range yet — keep trying automatically, like USB.
+            auto_cal.restart();
+            set_error(ctx, &code);
+        }
+    }
 }
 
 fn on_telem(ctx: &Arc<Ctx>, dev: &mut Handbrake, auto_cal: &mut AutoCal, t: proto::Telem) {

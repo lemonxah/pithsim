@@ -21,7 +21,7 @@
 //! The game axis over USB HID is unaffected and remains the default.
 
 use std::net::UdpSocket;
-use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -35,6 +35,12 @@ use pith_core::net;
 const CREDS_NS: &str = "wifi";
 const KEY_SSID: &str = "ssid";
 const KEY_PASS: &str = "pass";
+/// Consecutive abnormal-reset counter (crash guard, see `wifi_thread`).
+const KEY_CRASHES: &str = "crashes";
+/// Abnormal resets in a row with WiFi armed before the guard trips.
+const CRASH_LIMIT: u8 = 3;
+/// Link uptime after which a boot counts as stable (clears the counter).
+const STABLE_AFTER: Duration = Duration::from_secs(60);
 const BEACON_INTERVAL: Duration = Duration::from_secs(1);
 const AXIS_INTERVAL: Duration = Duration::from_millis(5); // ~200 Hz axis stream
 const STATE_INTERVAL: Duration = Duration::from_millis(250);
@@ -59,6 +65,10 @@ pub struct WifiOpts {
     /// Whether this device streams a joystick axis (pedals/handbrake) or not
     /// (the DDU, which receives telemetry instead).
     pub stream_axis: bool,
+    /// Whether this device streams its 32-button mask (the DDU's touch
+    /// "button box") so a wireless DDU's buttons still reach the game via the
+    /// dashboard's virtual joystick.
+    pub stream_buttons: bool,
     /// OTA-over-WiFi hooks; `None` disables `@OTAWIFI` for this device.
     pub ota: Option<OtaHooks>,
 }
@@ -68,6 +78,9 @@ pub struct WifiShared {
     /// Latest joystick axis (main writes each tick; streamed when
     /// `WifiOpts::stream_axis`).
     pub axis: AtomicU16,
+    /// Latest 32-button mask (main writes each tick; streamed when
+    /// `WifiOpts::stream_buttons`).
+    pub buttons: AtomicU32,
     /// Whether the STA link + IP are up.
     pub connected: AtomicBool,
     /// A short status line the device streams as `ST` (main updates it).
@@ -85,6 +98,7 @@ impl WifiShared {
     pub fn new() -> Self {
         WifiShared {
             axis: AtomicU16::new(0),
+            buttons: AtomicU32::new(0),
             connected: AtomicBool::new(false),
             state_line: Mutex::new(String::new()),
             rx: Mutex::new(Vec::new()),
@@ -113,13 +127,33 @@ pub fn spawn(
     opts: WifiOpts,
 ) {
     let _ = std::thread::Builder::new()
-        .stack_size(8192)
+        // 16 KB: the esp-idf-svc WiFi bring-up (BlockingWifi) + run_udp's TCP
+        // path (@OTAWIFI) + log formatting can overrun the previous 8 KB, and a
+        // stack overflow here aborts the whole device.
+        .stack_size(16384)
         .name("wifi".into())
         .spawn(move || wifi_thread(modem, sysloop, nvs_part, shared, serial, fw, opts));
 }
 
 fn creds_nvs(part: &EspDefaultNvsPartition) -> Option<EspDefaultNvs> {
     EspDefaultNvs::new(part.clone(), CREDS_NS, true).ok()
+}
+
+/// True when the last reset was involuntary — panic, watchdog, or brownout —
+/// the kinds a crashing (stack overflow) or overdrawing (radio inrush on a
+/// small board's regulator) WiFi bring-up produces.
+fn abnormal_reset() -> bool {
+    use esp_idf_svc::sys::{
+        esp_reset_reason, esp_reset_reason_t_ESP_RST_BROWNOUT, esp_reset_reason_t_ESP_RST_INT_WDT,
+        esp_reset_reason_t_ESP_RST_PANIC, esp_reset_reason_t_ESP_RST_TASK_WDT,
+        esp_reset_reason_t_ESP_RST_WDT,
+    };
+    let r = unsafe { esp_reset_reason() };
+    r == esp_reset_reason_t_ESP_RST_PANIC
+        || r == esp_reset_reason_t_ESP_RST_INT_WDT
+        || r == esp_reset_reason_t_ESP_RST_TASK_WDT
+        || r == esp_reset_reason_t_ESP_RST_WDT
+        || r == esp_reset_reason_t_ESP_RST_BROWNOUT
 }
 
 fn load_creds(nvs: &EspDefaultNvs) -> Option<(String, String)> {
@@ -149,21 +183,63 @@ fn wifi_thread(
     fw: String,
     opts: WifiOpts,
 ) {
+    // Drop to the ESP-IDF main task's priority (1): this loop is latency-
+    // tolerant, but at the pthread default (5) it outranks the main loop and
+    // can crowd it + TinyUSB servicing out on single-core chips (bench: the
+    // S2 handbrake's USB went silent whenever the link was up, and a pending
+    // OTA reboot flag was never serviced).
+    unsafe { esp_idf_svc::sys::vTaskPrioritySet(std::ptr::null_mut(), 1) };
+
     let mut creds_store = creds_nvs(&nvs_part);
 
+    // ---- crash guard ----
+    // A WiFi bring-up that kills the device (stack overflow, brownout from
+    // the radio's inrush) reboots it before USB even enumerates — from the
+    // outside the device is bricked, and every boot retries because the
+    // credentials persist in NVS. Count consecutive abnormal resets while
+    // WiFi is armed; past the limit leave the radio OFF and wait for a fresh
+    // @WIFI (which proves USB works and the user asked for a retry).
+    let mut crashes = creds_store
+        .as_ref()
+        .and_then(|n| n.get_u8(KEY_CRASHES).ok().flatten())
+        .unwrap_or(0);
+    if !abnormal_reset() && crashes != 0 {
+        // Clean boot (power-on / reset button / SW restart) — not WiFi's doing.
+        crashes = 0;
+        if let Some(nvs) = creds_store.as_mut() {
+            let _ = nvs.set_u8(KEY_CRASHES, 0);
+        }
+    }
+    if crashes >= CRASH_LIMIT {
+        log::warn!("wifi: OFF — device crashed {crashes}x right after bring-up; send @WIFI to re-arm");
+    }
+
     // Wait for credentials (from NVS, or provisioned over USB via @WIFI).
+    // A tripped guard ignores the STORED credentials (they're what keeps
+    // crashing the device) but still accepts fresh ones.
     let (mut ssid, mut pass) = loop {
         if let Some((s, p)) = shared.new_creds.lock().unwrap().take() {
             if let Some(nvs) = creds_store.as_mut() {
                 save_creds(nvs, &s, &p);
+                let _ = nvs.set_u8(KEY_CRASHES, 0); // fresh consent resets the guard
             }
+            crashes = 0;
             break (s, p);
         }
-        if let Some(c) = creds_store.as_ref().and_then(load_creds) {
-            break c;
+        if crashes < CRASH_LIMIT {
+            if let Some(c) = creds_store.as_ref().and_then(load_creds) {
+                break c;
+            }
         }
         std::thread::sleep(Duration::from_secs(2));
     };
+
+    // Arm the guard: if the bring-up below kills the device, the next boot
+    // sees the bumped counter. Cleared again after STABLE_AFTER of link
+    // uptime (see the run_udp callback), or by any clean reset.
+    if let Some(nvs) = creds_store.as_mut() {
+        let _ = nvs.set_u8(KEY_CRASHES, crashes.saturating_add(1));
+    }
 
     // Build the driver ONCE (it owns the modem), then (re)configure/connect
     // in the loop below — surviving AP drops, wrong credentials, and live
@@ -200,7 +276,13 @@ fn wifi_thread(
                 shared.connected.store(true, Ordering::SeqCst);
                 log::info!("wifi: up");
                 // Runs until the link drops or new credentials arrive.
-                run_udp(&wifi, &shared, &serial, &fw, &opts);
+                run_udp(&wifi, &shared, &serial, &fw, &opts, &mut || {
+                    // Survived STABLE_AFTER of runtime — this boot is stable;
+                    // stand the crash guard down.
+                    if let Some(nvs) = creds_store.as_mut() {
+                        let _ = nvs.set_u8(KEY_CRASHES, 0);
+                    }
+                });
                 shared.connected.store(false, Ordering::SeqCst);
                 log::warn!("wifi: link lost or reconfiguring — reconnecting");
                 let _ = wifi.disconnect();
@@ -235,6 +317,15 @@ fn connect(
     if !wifi.is_started().unwrap_or(false) {
         wifi.start()?;
     }
+    // Kill modem power-save (default WIFI_PS_MIN_MODEM). With it on, the
+    // radio's sleep/DFS cycling starves the USB-OTG peripheral — bench-proven
+    // on the ESP32-S2 handbrake: HID enumerates but every IN report and
+    // command reply stops the moment the link comes up, so the device "works
+    // on WiFi but is dead over USB". Full-power RX also cuts the axis
+    // stream's latency, which is exactly what an input device wants.
+    unsafe {
+        esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE);
+    }
     wifi.connect()?;
     wifi.wait_netif_up()?;
     Ok(())
@@ -249,6 +340,7 @@ fn run_udp(
     serial: &str,
     fw: &str,
     opts: &WifiOpts,
+    on_stable: &mut dyn FnMut(),
 ) {
     let sock = match UdpSocket::bind(("0.0.0.0", net::DEVICE_PORT)) {
         Ok(s) => s,
@@ -267,8 +359,17 @@ fn run_udp(
     let mut last_axis = Instant::now();
     let mut last_state = Instant::now();
     let mut buf = [0u8; 2048];
+    let started = Instant::now();
+    let mut stable = false;
+    let mut sent_buttons: Option<u32> = None; // last BT mask sent (None = never)
 
     loop {
+        // One boot surviving this long means the bring-up isn't crashing the
+        // device — tell the crash guard (it clears its NVS counter).
+        if !stable && started.elapsed() >= STABLE_AFTER {
+            stable = true;
+            on_stable();
+        }
         // Exit conditions: link dropped (poll ~1 Hz) or re-provisioned.
         if last_link_check.elapsed() >= Duration::from_secs(1) {
             last_link_check = Instant::now();
@@ -311,6 +412,18 @@ fn run_udp(
                 last_axis = Instant::now();
                 let ax = net::axis_packet(serial, shared.axis.load(Ordering::Relaxed));
                 let _ = sock.send_to(ax.as_bytes(), dash);
+            }
+            // Buttons: on change immediately (a press must not lag), plus the
+            // STATE_INTERVAL refresh below covers lost datagrams / late
+            // subscribers (UDP is fire-and-forget).
+            if opts.stream_buttons {
+                let mask = shared.buttons.load(Ordering::Relaxed);
+                let refresh = last_state.elapsed() >= STATE_INTERVAL;
+                if sent_buttons != Some(mask) || refresh {
+                    sent_buttons = Some(mask);
+                    let bt = net::buttons_packet(serial, mask);
+                    let _ = sock.send_to(bt.as_bytes(), dash);
+                }
             }
             if last_state.elapsed() >= STATE_INTERVAL {
                 last_state = Instant::now();

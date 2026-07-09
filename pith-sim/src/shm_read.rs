@@ -93,6 +93,27 @@ pub fn read_once() -> Option<ShmRead> {
                         crate::shm::apply_acc_graphics(&mut t, gb);
                     }
                 }
+                // Flag-path probe → GUI device log: is the graphics page even
+                // mirrored, and what does the raw flag read? (The bridge only
+                // guarantees physics; a missing/short graphics page silently
+                // costs flag/laps/TC — make that visible.)
+                let debug = if evo {
+                    None
+                } else {
+                    Some(match &gb {
+                        Some(g) if g.len() >= 1228 => format!(
+                            "[shm] ac/acc graphics len={} flag_raw={} flag={}\n",
+                            g.len(),
+                            crate::le::i32(g, 1224),
+                            t.flag
+                        ),
+                        Some(g) => format!(
+                            "[shm] ac/acc graphics page too short for flag (len={})\n",
+                            g.len()
+                        ),
+                        None => "[shm] ac/acc graphics page MISSING — no flag/laps/TC (bridge not mirroring it?)\n".to_string(),
+                    })
+                };
                 let (car, track) = if evo {
                     crate::shm::acevo_identity(
                         &read(stat).unwrap_or_default(),
@@ -108,7 +129,7 @@ pub fn read_once() -> Option<ShmRead> {
                     label,
                     car,
                     track,
-                    debug: None,
+                    debug,
                 });
             }
         }
