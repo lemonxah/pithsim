@@ -108,7 +108,7 @@ impl Ads1256 {
         self.write_register(REG_ADCON, (adcon & !0x07) | loadcell::ADC_GAIN_CODE)?;
         // buffenable=false in the reference — STATUS register untouched.
         self.command_after_drdy(CMD_SELFCAL)?;
-        self.wait_drdy_poll();
+        self.wait_drdy_poll()?;
         Ok(())
     }
 
@@ -144,17 +144,30 @@ impl Ads1256 {
     /// during init/channel setup), then clocks out one opcode.
     fn command_after_drdy(&mut self, cmd: u8) -> Result<(), EspError> {
         self.cs.set_low()?;
-        self.wait_drdy_poll();
+        if let Err(e) = self.wait_drdy_poll() {
+            let _ = self.cs.set_high();
+            return Err(e);
+        }
         self.spi.write(&[cmd])?;
         Ets::delay_us(1);
         self.cs.set_high()?;
         Ok(())
     }
 
-    fn wait_drdy_poll(&self) {
-        while self.drdy.is_high() {
-            // 2000 SPS → ≤500 µs; busy-wait like the reference's waitDRDY().
+    /// Wait for DRDY low. A conversion is ≤500 µs at 2000 SPS and SELFCAL a
+    /// few ms, so 500 ms of silence means the chip is absent or its analog
+    /// rail is unpowered (e.g. a USB-only bench with no servo supply). Time
+    /// out instead of busy-waiting forever — the reference's waitDRDY() spins
+    /// unbounded, which hangs boot right after the white LED with a dead ADC;
+    /// erroring out lets `main` take its "running without loadcell" path.
+    fn wait_drdy_poll(&self) -> Result<(), EspError> {
+        for _ in 0..10_000 {
+            if self.drdy.is_low() {
+                return Ok(());
+            }
+            Ets::delay_us(50);
         }
+        Err(EspError::from(esp_idf_svc::sys::ESP_ERR_TIMEOUT as i32).unwrap())
     }
 
     /// Blocks on the next DRDY falling edge (ISR → task notification) and

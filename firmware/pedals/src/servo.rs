@@ -1,10 +1,10 @@
-//! JSS57P3N servo transport — the on-device half of the Modbus RTU driver.
+//! JSS57P1.5N servo transport — the on-device half of the Modbus RTU driver.
 //! All framing/register knowledge lives in the host-tested
 //! `pith_pedals_core::{modbus, servo_jss57p}`; this module only moves those
 //! frames over the ESP32 UART and applies timeouts/retries.
 //!
 //! **SAFETY — this stays DISARMED until the user explicitly arms it.** The
-//! JSS57P3N's serial parameters (baud/parity/slave ID) are unpublished and
+//! JSS57P1.5N's serial parameters (baud/parity/slave ID) are unpublished and
 //! its RS232 port's electrical levels are unconfirmed against a 3.3V UART
 //! (see `docs/pedals.md` §0 and `board.rs`). `Servo::new` opens the UART and
 //! can run the identity probe, but `send_target` / `enable` refuse to

@@ -44,3 +44,9 @@ embuild = "0.33"
 [[package.metadata.esp-idf-sys.extra_components]]
 component_dirs = ["components/pith_pedals_usb"]
 bindings_header = "components/pith_pedals_usb/include/pith_pedals_usb.h"
+
+# Onboard status LED (one WS2812 pixel on GPIO12): espressif/led_strip RMT
+# driver, same setup as the DDU's rev strip. See src/led.rs.
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/led_strip", version = "~2.5.5" }
+bindings_header = "src/led_strip_bindings.h"

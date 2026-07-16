@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use slint::ComponentHandle;
 
-use crate::{AppState, AppWindow, Page};
+use crate::{AppState, AppWindow, Page, Wireless};
 
 /// The pages to capture, paired with the output file stem.
 const PAGES: &[(Page, &str)] = &[
@@ -38,6 +38,12 @@ pub fn run(ui: &AppWindow, rt: &tokio::runtime::Runtime, dir: &str) {
     let app = ui.global::<AppState>();
     app.set_connected(true); // drop the "no device" gate so the body is visible
     app.set_conn_detail("Connected · demo".into());
+    // The Wireless screen is populated from the persisted config, which holds
+    // the developer's REAL network name — screenshots go in the README, so
+    // overwrite with demo credentials before anything is captured.
+    let wl = ui.global::<Wireless>();
+    wl.set_ssid("PitLane".into());
+    wl.set_pass("demo-password".into());
     app.set_page(PAGES[0].0);
     ui.window().set_size(slint::PhysicalSize::new(1320, 860));
 

@@ -32,9 +32,12 @@ v1 design). Confirmed from that repo:
   crystal, 2.5V vref) — so ADS1220 (§1 below) is what the *newer* V6/V7 dev
   boards (PCB_VERSION 13/14) use, not this one.
 - **Actuator**: **not the iSV57T** (the reference project's default for this
-  board) — this build uses a **JSSmotor/Dewo JSS57P3N** (NEMA23 closed-loop
-  stepper / "integrated digital hybrid servo", 1000-line encoder, 3 N·m
-  holding torque, 24-48V). Confirmed **not** the sibling `JSS57-R` product
+  board) — this build uses a **JSSmotor/Dewo JSS57P1.5N** (NEMA23 closed-loop
+  stepper / "integrated digital hybrid servo", 1000-line encoder, 1.5 N·m
+  holding torque, 24-48V). Confirmed on the physical unit: it exposes
+  **RS232 plus PEND+/PEND− and ALM+/ALM− outputs** (the PCBA has no
+  terminals for the latter — they land on GPIO34/35 pads, see
+  `docs/pedals-board-map.md`). Confirmed **not** the sibling `JSS57-R` product
   (that's a different device on an RS485 bus with a completely different
   register map — its manual was fetched first by mistake from an AliExpress
   listing and is *not* applicable here; kept only as a source of
@@ -43,18 +46,26 @@ v1 design). Confirmed from that repo:
   for this product:
   <https://cdn.shopify.com/s/files/1/0014/4313/5560/files/Nema23_integrated_digital_hybrid_servo.pdf>,
   and a structured protocol brief the user compiled from it.
-  **Confirmed**: **Modbus RTU over the drive's 5-pin RS232 tuning port**
-  (+5V, TXD, GND, RXD, NC — matches the iSV57T's RS232 path, unlike the
-  JSS57-R), parameter number == holding register address (decimal 0-34).
+  **Confirmed**: **Modbus RTU over the drive's RS232 tuning port**,
+  parameter number == holding register address (decimal 0-34).
   Full register map + guarded read/write helpers are in
   `pith-pedals-core/src/servo_jss57p.rs` (generic Modbus RTU framing lives
   in `pith-pedals-core/src/modbus.rs`), transcribed from that brief.
+  **Board-side reality (2026-07-16)**: the PCBA v2.2b's servo-facing
+  interface is only `PUL · DIR · [RX · TX · GND] RS232 · VCC · GND` — the
+  BOARD has **no ALM/PEND input terminals** (the reference design leaves
+  those drive outputs unconnected). The drive DOES expose ALM and PEND;
+  plan: land them on the broken-out pads GPIO34/35 (`board::DRIVE_ALM` /
+  `DRIVE_PEND`). The full board+drive connector map is
+  `docs/pedals-board-map.md`.
   **Still blocked before real hardware** (per the brief's own "UNVERIFIED"
   flags, not resolved by reading the manual alone):
-  - **Physical layer**: whether TXD/RXD are true ±RS232 voltage levels or
-    5V TTL is unconfirmed — the +5V pin on that port suggests it may expect
-    a level-shifter cable. **Scope it before wiring to a 3.3V ESP32 UART**;
-    true RS232 levels can damage the MCU.
+  - **Physical layer**: the PCBA v2.2b puts a MAX3232 between the ESP32 UART
+    and its RS232 port, so through the board's CN3 the levels are true
+    ±RS232 by construction — the old "scope before wiring a 3.3V UART"
+    caution only applies if you bypass the board's port. The drive side is
+    labeled RS232 and presumed true-level; a scope check before first
+    connect is still cheap insurance.
   - **Serial parameters**: baud, parity, and slave ID are not published (the
     manual defers to the vendor's "Protuner" tool) — must be discovered on
     the bench by probing candidate bauds (9600/19200/38400/57600/115200,
@@ -77,10 +88,12 @@ v1 design). Confirmed from that repo:
   (GPIO4: MCP4725 DAC I2C SCL *and* brake-resistor control; GPIO6: ADC RST
   *and* emergency-stop) that exist in the reference source itself — see
   that module's doc comment before wiring anything to them.
-- Board-specific quirks from that repo's README worth carrying over: pedal
-  role (throttle/brake/clutch) is set by an on-board DIP switch (SW1), the
+- Board-specific quirks from that repo's README worth carrying over: the
   v2.x line requires a hand-soldered brake resistor (not populated by
-  assembly), and first-flash entry uses a "Flash" button (not "Boot").
+  assembly), and first-flash entry uses a "Flash" button (not "Boot") — or
+  hands-free via the onboard CH343P (see `docs/pedals-board-map.md`). The
+  v2.1's pedal-type DIP switch (SW1) is GONE on the v2.2b — pedal role is
+  software-assigned, which matches pith's identity-via-USB-serial approach.
 
 ## 1. What the reference project actually is
 
@@ -278,7 +291,7 @@ implications — all of this is ported and host-unit-tested in
 - `firmware/pedals`: boots, exposes the report-id-2 command channel +
   `@CAP`/`@OTA`/`@CFG`/`@ACT`/`@ARM`/`@DISARM`/`@HOME`, and wires the real
   hardware — the **ADS1256 loadcell driver** (`ads1256.rs`, SPI + DRDY) and
-  the **JSS57P3N Modbus servo driver** (`servo.rs` over `pith-pedals-core`'s
+  the **JSS57P1.5N Modbus servo driver** (`servo.rs` over `pith-pedals-core`'s
   tested framing) — into the control loop in `main.rs`. Compiles clean for
   `xtensa-esp32s3-espidf`. The loadcell→joystick path runs immediately (it
   commands nothing); motor output is disarmed by default (see Phase 2).
@@ -297,7 +310,7 @@ implications — all of this is ported and host-unit-tested in
 code exists and compiles; what's left is operator-supervised validation
 before it commands a real actuator, gated behind explicit steps so nothing
 moves by accident:
-1. **Scope the JSS57P3N's RS232 tuning port** — confirm TXD/RXD are 5 V TTL,
+1. **Scope the JSS57P1.5N's RS232 tuning port** — confirm TXD/RXD are 5 V TTL,
    not true ±RS232, before wiring to the ESP32 UART (§0).
 2. **Discover serial params** — baud/parity/slave ID are unpublished; the
    servo driver's `probe_identity` reads register 0 (expect 57) to find them.

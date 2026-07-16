@@ -1,7 +1,9 @@
 //! JSS57P-series (P1.5N / P2N / P3N) Modbus RTU register map and guarded
 //! write helpers — see `docs/pedals.md` §0. This drives the actual actuator
-//! on the pedal build (a JSS57P3N), over the drive's 5-pin RS232 tuning
-//! port (+5V, TXD, GND, RXD, NC). This is **not** the same product as the
+//! on the pedal build over the drive's RS232 tuning port. The drive exposes
+//! ALM/PEND outputs but the PCBA has no terminal for them — the plan is the
+//! GPIO34/35 pads (see `docs/pedals-board-map.md`); registers 15/18/19
+//! below configure those outputs. This is **not** the same product as the
 //! `JSS57-R` (an RS485-bus servo with a different register map, whose
 //! manual `modbus.rs` cites only for its generic CRC/framing test vectors —
 //! that manual was fetched first by mistake, from an AliExpress listing for

@@ -2,25 +2,34 @@
 
 **Pith** — an all-Rust monorepo of DIY sim-racing gear: device firmwares, ONE
 desktop app that controls all of them, and the shared crates between them.
-Current gear: the **Pith DDU** (dash display unit) and the **Pith Handbrake**;
-active pedals are next.
+Current gear: the **Pith DDU** (dash display unit), the **Pith Handbrake**,
+and the **Pith Active Pedals** (load-cell force-feedback pedals).
 
 Every device enumerates under USB VID `303a` with its own PID (the table lives
-in `pith-device/src/lib.rs`): `4002` DDU · `8001` Handbrake.
+in `pith-device/src/lib.rs`): `4002` DDU · `8001` Handbrake · `8002` Pedals
+(one PID for every pedal board — clutch/brake/throttle are told apart by
+serial).
 
 ```
 pithsim/
 ├─ dashboard/   THE desktop app (Rust + Slint) for every Pith device. DDU: configure
 │               shift lights, touch buttons, the race-screen layout and per-car data;
 │               build/flash firmware; mirror live telemetry. Handbrake: auto-calibration
-│               wizard + live monitor. → binary `pith-dashboard`
+│               wizard + live monitor. Pedals: force-curve editor, live effects, named
+│               profiles (the SimHub-plugin replacement). Wireless: provision WiFi once
+│               and route wireless devices into a virtual joystick. → binary `pith-dashboard`
 ├─ firmware/
 │  ├─ ddu/      ESP32-S3 (XIAO S3) firmware (Rust + esp-idf, embedded-graphics + mipidsi).
 │  │            → binary `pithddu`. Lives in the `ota_0`/`ota_1` slots. Its own esp
 │  │            sub-workspace (toolchain + Xtensa target).
-│  └─ handbrake/  ESP32-S2 (Lolin S2 Mini) + HX711 load-cell firmware (Rust + esp-idf).
-│               USB HID joystick: one 16-bit axis + the calibration command channel.
-│               → binary `pith-hb`. Its own esp sub-workspace.
+│  ├─ handbrake/  ESP32-S2 (Lolin S2 Mini) + HX711 load-cell firmware (Rust + esp-idf).
+│  │            USB HID joystick: one 16-bit axis + the calibration command channel.
+│  │            → binary `pith-hb`. Also builds for ESP32-S3 (`just build-s3`).
+│  ├─ pedals/   ESP32-S3 active-pedal firmware (gilphilbert PCBA v2.2 Rev B board):
+│  │            ADS1256 load-cell ADC + a JSS57P closed-loop stepper over RS232/Modbus.
+│  │            USB HID axis + config channel + OTA. → binary `pith-pedals`.
+│  └─ pith-fw-wifi/  Shared firmware WiFi/UDP transport for every device: STA join,
+│               discovery beacon, and the same @-command protocol as USB, over UDP.
 ├─ pith-recovery/  ESP32-S3 recovery app (Rust + esp-idf) flashed to the `factory`
 │               partition. Boots FIRST on every power-up: a touchscreen countdown
 │               ("N seconds till boot" — tap for recovery), then chain-loads the main
@@ -34,9 +43,13 @@ pithsim/
 │               field_registry.json). no_std.
 ├─ pith-hb-core/  Shared calibration math + wire protocol for the handbrake
 │               (firmware + dashboard). Host-testable.
+├─ pith-pedals-core/  Shared active-pedal logic: wire protocol, force curve, the
+│               effect oscillators (ABS, TC, RPM, G-force, wheel slip, road impact…),
+│               admittance control, filters, and the Modbus servo driver. Host-testable.
 ├─ pith-device/ Host-side transport for ALL Pith gear: the HID command/log channel,
-│               serial fallback, DDU `Dash` (incl. @OTA upload) + `Handbrake` APIs,
-│               and the VID/PID table. Used by the dashboard and `pith-flash`.
+│               serial fallback, DDU `Dash` (incl. @OTA upload) + `Handbrake` +
+│               `Pedals` APIs, and the VID/PID table. Used by the dashboard and
+│               `pith-flash`.
 ├─ pith-sim/    Reusable telemetry sources: UDP game decoders (Forza/F1/AMS2/OutGauge),
 │               connector protocols (ACC/AC/GT7), shared-memory parsers (rF2-LMU/AC/R3E)
 │               + the /dev/shm reader. Bytes → a normalized pith-core Telemetry.
@@ -59,21 +72,69 @@ sudo cp 99-pith.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules
 
 Plug in any Pith device and launch `pith-dashboard` — every connected device
 shows up as a status card at the bottom of the sidebar, and each gets its own
-page. **Every device updates in place over USB (@OTA) from its own release
-stream** — `ddu-v*` for the DDU, `handbrake-v*` for the handbrake, each
-independently versioned: the DDU from its Firmware page, the handbrake from
-its page's INSTALL button — no buttons to hold, the device flips app slots
+page; the Overview lists them all. **Every device updates in place over USB
+(@OTA) from its own release stream** — `ddu-v*`, `handbrake-v*`, `pedals-v*`,
+each independently versioned — and the Firmware page lists every connected
+device's update side by side: no buttons to hold, the device flips app slots
 and reboots itself (a failed boot rolls back). The ROM bootloader (hold BOOT,
 tap RESET) remains as the recovery path, and does the one-time migration for
 handbrakes flashed before OTA existed.
 
 ## Screenshots
 
-| Overview | Telemetry UDP | Race-screen editor |
+| Overview | Race-screen editor | Shift lights |
 |---|---|---|
-| ![Overview](docs/screenshots/overview.png) | ![Telemetry UDP](docs/screenshots/telemetry-udp.png) | ![Screens](docs/screenshots/screens.png) |
+| ![Overview](docs/screenshots/overview.png) | ![Screens](docs/screenshots/screens.png) | ![Shift lights](docs/screenshots/shift-lights.png) |
+| **Pedals** | **Wireless** | **Telemetry UDP** |
+| ![Pedals](docs/screenshots/pedals.png) | ![Wireless](docs/screenshots/wireless.png) | ![Telemetry UDP](docs/screenshots/telemetry-udp.png) |
+| **Firmware** | **Car library** | **Device** |
+| ![Firmware](docs/screenshots/firmware.png) | ![Car library](docs/screenshots/car-library.png) | ![Device](docs/screenshots/device.png) |
 
 (Regenerate with `just screenshots` — the app renders each page to `docs/screenshots/`.)
+
+## Active pedals
+
+The newest gear: a load-cell **force-feedback pedal** — a Rust port of
+[ChrGri/DIY-Sim-Racing-FFB-Pedal](https://github.com/ChrGri/DIY-Sim-Racing-FFB-Pedal)
+into the Pith framework (design doc + port plan: `docs/pedals.md`). The
+hardware target is gilphilbert's **PCBA v2.2 Rev B** control board: an
+ESP32-S3, an ADS1256 load-cell ADC, and a JSS57P-series NEMA23 closed-loop
+stepper driven over RS232/Modbus. One board per pedal; the same firmware
+serves clutch, brake and throttle.
+
+The dashboard's **Pedals page** replaces the reference project's SimHub
+plugin end to end: a force-curve editor (linear / S-curve / exponent / log),
+live effect gains (ABS, TC, RPM, G-force, wheel slip, road impacts), and
+**named profiles** with auto-switch by game/car. The effects engine reads the
+same live telemetry merge the DDU uses — `pith-sim`'s own UDP/shm decoders,
+no SimHub required.
+
+Because this is a real-time force loop pushing back against a human foot, the
+motor-drive side rolls out in bench-validated phases (see "Phasing" in
+`docs/pedals.md`) rather than being trusted straight from a source port.
+
+## Wireless (WiFi)
+
+Every Pith device can now also talk over WiFi — an **addition** to USB, not a
+replacement. The dashboard's **Wireless page** stores one set of network
+credentials and provisions each device over its USB cable (`@WIFI`); the
+device keeps them in NVS and joins the network on its own from then on.
+Per-device toggles decide what the link is used for:
+
+- **Handbrake / pedals** — the device streams its axis over UDP and the
+  dashboard feeds it into a **software virtual joystick** (`/dev/uinput` on
+  Linux) that the game reads: no USB cable to the rig. Off by default — when
+  off, the device's own USB HID axis is what the game reads (never both, so
+  the axis isn't double-reported).
+- **DDU** — the dashboard forwards the live telemetry feed to wireless DDUs
+  on the network (mount the dash anywhere, no cable), and the DDU's touch
+  buttons can press the virtual joystick's buttons.
+
+The shared pieces: the wire protocol in `pith_core::net` (discovery beacons +
+the same `@`-command protocol as USB, over UDP), the firmware side in
+`firmware/pith-fw-wifi`, and the dashboard side in `dashboard/src/wifi.rs` +
+`vjoy.rs`. Status: compile-verified; bench validation on real hardware is
+pending.
 
 ## Workspaces
 
@@ -89,13 +150,17 @@ path-depend on the shared crates (`../../pith-core`, `../../pith-hb-core`, …).
 cargo build --release -p pith-dashboard
 cargo test  -p pith-core
 cargo test  -p pith-hb-core
+cargo test  -p pith-pedals-core
 cargo run   -p pith-dashboard --example ui_preview   # live pith-ui device preview
 
 # DDU firmware — esp toolchain (source ~/export-esp.sh first)
 cd firmware/ddu && cargo build --release
 
-# Handbrake firmware — same esp toolchain (xtensa-esp32s2)
+# Handbrake firmware — same esp toolchain (xtensa-esp32s2; `just build-s3` for S3)
 cd firmware/handbrake && cargo build --release
+
+# Pedals firmware — same esp toolchain (xtensa-esp32s3)
+cd firmware/pedals && cargo build --release
 
 # Recovery app — same esp toolchain, flashed to the factory partition
 cd pith-recovery && cargo build --release
@@ -126,6 +191,15 @@ Kart Racing Pro via the games' "UDP Proxy" output (`proxy_udp.ini`: `enable=1`,
 `ip=<dashboard>:<udp port>`, `info=1`), covering gear/rpm/max+shift rpm/speed/
 fuel/water/inputs/laps/splits plus the bike/kart name for the car library. GP
 Bikes / World Racing Series stream the same framing and decode head-only.
+
+Also new: **EA SPORTS WRC (2023)** has its own native UDP decoder
+(`pith-sim/src/eawrc.rs`) for the game's default 237-byte `session_update`
+packet — the legacy DiRT "extradata" decoder no longer has to stand in for it.
+And four **FFB channels** — `g_long_x100` / `g_lat_x100` / `wheel_slip` /
+`susp_impact` — now ride the frame as bindable fields; they feed the active
+pedals' effects engine (and can be placed on the DDU like any other field).
+Per-title FFB-channel coverage, plus the EA WRC and CarX research notes, live
+in `docs/telemetry-games.md`.
 
 | Field | Forza | F1 | AMS2 | DiRT | LFS | GT7 | ACC | AC | EVO | rF2 | R3E |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -222,6 +296,8 @@ Independent release streams from this one repo, via tag prefixes:
 
 - `dashboard-v*` → desktop app release (Linux tarball + `.deb`, Windows zip)
 - `ddu-v*`       → DDU firmware app image (`pithddu-<board>.bin`)
+- `handbrake-v*` → handbrake firmware app image
+- `pedals-v*`    → pedals firmware app image (`pith-pedals-pcba_v2.2b.bin`)
 - recovery (`pith-recovery`) is flashed to the `factory` partition separately; it
   changes rarely and is not part of the firmware OTA stream.
 

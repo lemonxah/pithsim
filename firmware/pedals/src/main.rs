@@ -1,6 +1,6 @@
 // pith-pedals — ESP32-S3 active pedal firmware. Target hardware confirmed:
 // gilphilbert's "PCBA V2" control board, v2.2 Rev B (ESP32-S3FH4R2, ADS1256
-// loadcell ADC, a JSSmotor JSS57P3N closed-loop stepper over RS232) — see
+// loadcell ADC, a JSSmotor JSS57P1.5N closed-loop stepper over RS232) — see
 // docs/pedals.md §0 and board.rs for the sourced pin map.
 //
 // Architecture: all control math (loadcell scaling, lever kinematics, Kalman
@@ -20,6 +20,7 @@
 mod ads1256;
 mod board;
 mod device;
+mod led;
 mod ota;
 mod runtime;
 mod servo;
@@ -38,6 +39,11 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 fn main() {
     esp_idf_svc::sys::link_patches();
     EspLogger::initialize_default();
+
+    // Status LED first — white as "main() reached", before anything that can
+    // crash. With the console on UART0 this is the only zero-tooling way to
+    // see whether the app is even booting (see led.rs for the color map).
+    let mut led = led::init();
 
     let serial = device::serial();
     log::info!("pith-pedals boot — serial {serial}");
@@ -100,7 +106,7 @@ fn main() {
         }
     };
 
-    // --- Servo UART (JSS57P3N, RS232 Modbus). Opened DISARMED. Baud/slave
+    // --- Servo UART (JSS57P1.5N, RS232 Modbus). Opened DISARMED. Baud/slave
     // are unpublished and must be discovered on the bench (docs/pedals.md
     // §0); 9600/1 is the brief's first probe candidate. The driver refuses
     // motion until armed, so opening the port here is harmless. ---
@@ -188,6 +194,15 @@ fn main() {
                 // Open-loop position follow.
                 phys_steps = (out.target_steps - rt.soft_min() as f32).max(0.0);
             }
+        }
+
+        if let Some(led) = led.as_mut() {
+            led.tick(
+                now_us() / 1000,
+                ota::ACTIVE.load(std::sync::atomic::Ordering::SeqCst),
+                rt.armed,
+                usb::mounted(),
+            );
         }
 
         std::thread::sleep(Duration::from_millis(1));

@@ -1,4 +1,4 @@
-//! Bench discovery probe for the JSS57P3N drive's RS232/Modbus port — answers
+//! Bench discovery probe for the JSS57P1.5N drive's RS232/Modbus port — answers
 //! "does this drive speak Modbus at all, and at what baud/slave-ID?" without
 //! touching anything: it only ever sends FC 0x03 reads.
 //!

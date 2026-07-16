@@ -16,6 +16,18 @@ hb-firmware-build:
 hb-flash port="":
     cd firmware/handbrake && just flash {{ port }}
 
+# Host unit tests for the pedals' shared protocol/effects crate.
+pedals-test:
+    cargo test -p pith-pedals-core
+
+# Build the pedals firmware (debug). Needs the esp toolchain.
+pedals-firmware-build:
+    cd firmware/pedals && cargo build
+
+# Build + flash the pedals firmware (ROM download mode: hold BOOT, tap RESET).
+pedals-flash port="":
+    cd firmware/pedals && just flash {{ port }}
+
 # Build the SimHub plugin (net48) and install the DLL into the SimHub folder.
 # Builds on Linux against a Wine SimHub prefix — no Windows/Mono needed. Override
 # the SimHub path (or set $SIMHUB_PATH); the csproj copies the DLL in on success.
